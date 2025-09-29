@@ -1,4 +1,4 @@
-// Менеджер IndexedDB для P2P Messenger
+п»ї// РњРµРЅРµРґР¶РµСЂ IndexedDB РґР»СЏ P2P Messenger
 class IndexedDBManager {
     constructor() {
         this.dbName = 'P2PMessengerDB';
@@ -7,7 +7,7 @@ class IndexedDBManager {
         this.initPromise = null;
     }
 
-    // Инициализация базы данных
+    // РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ Р±Р°Р·С‹ РґР°РЅРЅС‹С…
     async init() {
         if (this.initPromise) {
             return this.initPromise;
@@ -17,58 +17,58 @@ class IndexedDBManager {
             const request = indexedDB.open(this.dbName, this.version);
 
             request.onerror = () => {
-                console.error('Ошибка открытия IndexedDB:', request.error);
+                console.error('РћС€РёР±РєР° РѕС‚РєСЂС‹С‚РёСЏ IndexedDB:', request.error);
                 reject(request.error);
             };
 
             request.onsuccess = () => {
                 this.db = request.result;
-                console.log('IndexedDB успешно открыта');
+                console.log('IndexedDB СѓСЃРїРµС€РЅРѕ РѕС‚РєСЂС‹С‚Р°');
                 resolve(this.db);
             };
 
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
-                console.log('Обновление структуры IndexedDB');
+                console.log('РћР±РЅРѕРІР»РµРЅРёРµ СЃС‚СЂСѓРєС‚СѓСЂС‹ IndexedDB');
 
-                // Создаем хранилище для сообщений
+                // РЎРѕР·РґР°РµРј С…СЂР°РЅРёР»РёС‰Рµ РґР»СЏ СЃРѕРѕР±С‰РµРЅРёР№
                 if (!db.objectStoreNames.contains('messages')) {
                     const messagesStore = db.createObjectStore('messages', { keyPath: 'id' });
                     messagesStore.createIndex('timestamp', 'timestamp', { unique: false });
                     messagesStore.createIndex('sender', 'sender', { unique: false });
                 }
 
-                // Создаем хранилище для файлов
+                // РЎРѕР·РґР°РµРј С…СЂР°РЅРёР»РёС‰Рµ РґР»СЏ С„Р°Р№Р»РѕРІ
                 if (!db.objectStoreNames.contains('files')) {
                     const filesStore = db.createObjectStore('files', { keyPath: 'id' });
                     filesStore.createIndex('name', 'name', { unique: false });
                     filesStore.createIndex('timestamp', 'timestamp', { unique: false });
                 }
 
-                // Создаем хранилище для пиров
+                // РЎРѕР·РґР°РµРј С…СЂР°РЅРёР»РёС‰Рµ РґР»СЏ РїРёСЂРѕРІ
                 if (!db.objectStoreNames.contains('peers')) {
                     const peersStore = db.createObjectStore('peers', { keyPath: 'id' });
                     peersStore.createIndex('lastSeen', 'lastSeen', { unique: false });
                 }
 
-                // Создаем хранилище для состояний пиров
+                // РЎРѕР·РґР°РµРј С…СЂР°РЅРёР»РёС‰Рµ РґР»СЏ СЃРѕСЃС‚РѕСЏРЅРёР№ РїРёСЂРѕРІ
                 if (!db.objectStoreNames.contains('peerStates')) {
                     db.createObjectStore('peerStates', { keyPath: 'peerId' });
                 }
 
-                // Создаем хранилище для настроек приложения
+                // РЎРѕР·РґР°РµРј С…СЂР°РЅРёР»РёС‰Рµ РґР»СЏ РЅР°СЃС‚СЂРѕРµРє РїСЂРёР»РѕР¶РµРЅРёСЏ
                 if (!db.objectStoreNames.contains('appSettings')) {
                     db.createObjectStore('appSettings', { keyPath: 'key' });
                 }
 
-                console.log('Структура IndexedDB создана');
+                console.log('РЎС‚СЂСѓРєС‚СѓСЂР° IndexedDB СЃРѕР·РґР°РЅР°');
             };
         });
 
         return this.initPromise;
     }
 
-    // Получить настройку приложения
+    // РџРѕР»СѓС‡РёС‚СЊ РЅР°СЃС‚СЂРѕР№РєСѓ РїСЂРёР»РѕР¶РµРЅРёСЏ
     async getSetting(key) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -81,7 +81,7 @@ class IndexedDBManager {
         });
     }
 
-    // Сохранить настройку приложения
+    // РЎРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєСѓ РїСЂРёР»РѕР¶РµРЅРёСЏ
     async setSetting(key, value) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -94,7 +94,7 @@ class IndexedDBManager {
         });
     }
 
-    // Получить все сообщения
+    // РџРѕР»СѓС‡РёС‚СЊ РІСЃРµ СЃРѕРѕР±С‰РµРЅРёСЏ
     async getAllMessages() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -107,7 +107,7 @@ class IndexedDBManager {
         });
     }
 
-    // Сохранить сообщение
+    // РЎРѕС…СЂР°РЅРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ
     async saveMessage(message) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -120,7 +120,7 @@ class IndexedDBManager {
         });
     }
 
-    // Сохранить несколько сообщений
+    // РЎРѕС…СЂР°РЅРёС‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ СЃРѕРѕР±С‰РµРЅРёР№
     async saveMessages(messages) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -136,7 +136,7 @@ class IndexedDBManager {
         });
     }
 
-    // Удалить все сообщения
+    // РЈРґР°Р»РёС‚СЊ РІСЃРµ СЃРѕРѕР±С‰РµРЅРёСЏ
     async clearMessages() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -149,7 +149,7 @@ class IndexedDBManager {
         });
     }
 
-    // Получить все файлы
+    // РџРѕР»СѓС‡РёС‚СЊ РІСЃРµ С„Р°Р№Р»С‹
     async getAllFiles() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -162,7 +162,7 @@ class IndexedDBManager {
         });
     }
 
-    // Сохранить файл
+    // РЎРѕС…СЂР°РЅРёС‚СЊ С„Р°Р№Р»
     async saveFile(fileData) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -175,7 +175,7 @@ class IndexedDBManager {
         });
     }
 
-    // Удалить все файлы
+    // РЈРґР°Р»РёС‚СЊ РІСЃРµ С„Р°Р№Р»С‹
     async clearFiles() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -188,7 +188,7 @@ class IndexedDBManager {
         });
     }
 
-    // Получить файл по ID
+    // РџРѕР»СѓС‡РёС‚СЊ С„Р°Р№Р» РїРѕ ID
     async getFile(fileId) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -201,7 +201,7 @@ class IndexedDBManager {
         });
     }
 
-    // Удалить файл по ID
+    // РЈРґР°Р»РёС‚СЊ С„Р°Р№Р» РїРѕ ID
     async deleteFile(fileId) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -214,7 +214,7 @@ class IndexedDBManager {
         });
     }
 
-    // Получить всех пиров
+    // РџРѕР»СѓС‡РёС‚СЊ РІСЃРµС… РїРёСЂРѕРІ
     async getAllPeers() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -227,7 +227,7 @@ class IndexedDBManager {
         });
     }
 
-    // Сохранить пира
+    // РЎРѕС…СЂР°РЅРёС‚СЊ РїРёСЂР°
     async savePeer(peerData) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -240,7 +240,7 @@ class IndexedDBManager {
         });
     }
 
-    // Сохранить несколько пиров
+    // РЎРѕС…СЂР°РЅРёС‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ РїРёСЂРѕРІ
     async savePeers(peersArray) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -256,7 +256,7 @@ class IndexedDBManager {
         });
     }
 
-    // Удалить пира по ID
+    // РЈРґР°Р»РёС‚СЊ РїРёСЂР° РїРѕ ID
     async deletePeer(peerId) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -269,7 +269,7 @@ class IndexedDBManager {
         });
     }
 
-    // Удалить всех пиров
+    // РЈРґР°Р»РёС‚СЊ РІСЃРµС… РїРёСЂРѕРІ
     async clearPeers() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -282,7 +282,7 @@ class IndexedDBManager {
         });
     }
 
-    // Получить состояние пира
+    // РџРѕР»СѓС‡РёС‚СЊ СЃРѕСЃС‚РѕСЏРЅРёРµ РїРёСЂР°
     async getPeerState(peerId) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -295,7 +295,7 @@ class IndexedDBManager {
         });
     }
 
-    // Сохранить состояние пира
+    // РЎРѕС…СЂР°РЅРёС‚СЊ СЃРѕСЃС‚РѕСЏРЅРёРµ РїРёСЂР°
     async savePeerState(peerId, state) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -308,7 +308,7 @@ class IndexedDBManager {
         });
     }
 
-    // Получить все состояния пиров
+    // РџРѕР»СѓС‡РёС‚СЊ РІСЃРµ СЃРѕСЃС‚РѕСЏРЅРёСЏ РїРёСЂРѕРІ
     async getAllPeerStates() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -327,7 +327,7 @@ class IndexedDBManager {
         });
     }
 
-    // Удалить все состояния пиров
+    // РЈРґР°Р»РёС‚СЊ РІСЃРµ СЃРѕСЃС‚РѕСЏРЅРёСЏ РїРёСЂРѕРІ
     async clearPeerStates() {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -340,28 +340,28 @@ class IndexedDBManager {
         });
     }
 
-    // Получить время последней синхронизации
+    // РџРѕР»СѓС‡РёС‚СЊ РІСЂРµРјСЏ РїРѕСЃР»РµРґРЅРµР№ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё
     async getLastSyncTime() {
         const result = await this.getSetting('lastSyncTime');
         return result ? parseInt(result) : 0;
     }
 
-    // Сохранить время последней синхронизации
+    // РЎРѕС…СЂР°РЅРёС‚СЊ РІСЂРµРјСЏ РїРѕСЃР»РµРґРЅРµР№ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё
     async setLastSyncTime(timestamp) {
         return this.setSetting('lastSyncTime', timestamp.toString());
     }
 
-    // Получить ID пира
+    // РџРѕР»СѓС‡РёС‚СЊ ID РїРёСЂР°
     async getPeerId() {
         return this.getSetting('peerId');
     }
 
-    // Сохранить ID пира
+    // РЎРѕС…СЂР°РЅРёС‚СЊ ID РїРёСЂР°
     async setPeerId(peerId) {
         return this.setSetting('peerId', peerId);
     }
 
-    // Очистить все данные приложения
+    // РћС‡РёСЃС‚РёС‚СЊ РІСЃРµ РґР°РЅРЅС‹Рµ РїСЂРёР»РѕР¶РµРЅРёСЏ
     async clearAllData() {
         await this.init();
         
@@ -372,11 +372,11 @@ class IndexedDBManager {
             this.clearPeerStates()
         ];
 
-        // Очищаем настройки кроме peerId
+        // РћС‡РёС‰Р°РµРј РЅР°СЃС‚СЂРѕР№РєРё РєСЂРѕРјРµ peerId
         const currentPeerId = await this.getPeerId();
         await this.setSetting('lastSyncTime', '0');
         
-        // Если peerId был, сохраняем его заново
+        // Р•СЃР»Рё peerId Р±С‹Р», СЃРѕС…СЂР°РЅСЏРµРј РµРіРѕ Р·Р°РЅРѕРІРѕ
         if (currentPeerId) {
             await this.setPeerId(currentPeerId);
         }
@@ -384,7 +384,7 @@ class IndexedDBManager {
         return Promise.all(clearPromises);
     }
 
-    // Получить статистику базы данных
+    // РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ Р±Р°Р·С‹ РґР°РЅРЅС‹С…
     async getDatabaseStats() {
         await this.init();
         
@@ -398,7 +398,7 @@ class IndexedDBManager {
         return stats;
     }
 
-    // Получить количество записей в хранилище
+    // РџРѕР»СѓС‡РёС‚СЊ РєРѕР»РёС‡РµСЃС‚РІРѕ Р·Р°РїРёСЃРµР№ РІ С…СЂР°РЅРёР»РёС‰Рµ
     async getStoreCount(storeName) {
         await this.init();
         return new Promise((resolve, reject) => {
@@ -412,5 +412,5 @@ class IndexedDBManager {
     }
 }
 
-// Глобальный экземпляр менеджера IndexedDB
+// Р“Р»РѕР±Р°Р»СЊРЅС‹Р№ СЌРєР·РµРјРїР»СЏСЂ РјРµРЅРµРґР¶РµСЂР° IndexedDB
 window.indexedDBManager = new IndexedDBManager();
