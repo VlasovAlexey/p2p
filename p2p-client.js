@@ -4,7 +4,7 @@ class P2PClient {
         this.localPeerId = this.generatePeerId();
         this.connections = new Map(); // ID пира -> RTCPeerConnection
         this.dataChannels = new Map(); // ID пира -> RTCDataChannel
-        this.peers = new Set(); // Все известные пиры
+        this.peers = new Map(); // Все известные пиры с метаданными
         this.connectedPeers = new Set(); // Только подключенные пиры
         
         // Конфигурация WebRTC с STUN серверами Google
@@ -25,6 +25,10 @@ class P2PClient {
         this.files = new Map();
         this.pendingOffer = null; // Ожидающее ответа предложение
         
+        // Для синхронизации
+        this.lastSyncTime = 0;
+        this.peerStates = new Map(); // Состояния пиров для синхронизации
+        
         this.init();
     }
     
@@ -33,6 +37,7 @@ class P2PClient {
         this.loadFromStorage();
         this.setupEventListeners();
         this.updateUI();
+        this.startPeerMonitoring();
         
         console.log(`P2P клиент инициализирован с ID: ${this.localPeerId}`);
     }
@@ -51,7 +56,10 @@ class P2PClient {
     loadFromStorage() {
         const savedPeers = localStorage.getItem('knownPeers');
         if (savedPeers) {
-            this.peers = new Set(JSON.parse(savedPeers));
+            const peersArray = JSON.parse(savedPeers);
+            peersArray.forEach(peerData => {
+                this.peers.set(peerData.id, peerData);
+            });
         }
         
         const savedMessages = localStorage.getItem('messageHistory');
@@ -66,11 +74,29 @@ class P2PClient {
                 this.files.set(fileData.id, fileData);
             });
         }
+        
+        const savedPeerStates = localStorage.getItem('peerStates');
+        if (savedPeerStates) {
+            const states = JSON.parse(savedPeerStates);
+            states.forEach(state => {
+                this.peerStates.set(state.peerId, state);
+            });
+        }
+        
+        const savedLastSync = localStorage.getItem('lastSyncTime');
+        if (savedLastSync) {
+            this.lastSyncTime = parseInt(savedLastSync);
+        }
     }
     
     // Сохранение данных в LocalStorage
     saveToStorage() {
-        localStorage.setItem('knownPeers', JSON.stringify([...this.peers]));
+        const peersArray = [];
+        this.peers.forEach((peerData, id) => {
+            peersArray.push(peerData);
+        });
+        localStorage.setItem('knownPeers', JSON.stringify(peersArray));
+        
         localStorage.setItem('messageHistory', JSON.stringify(this.messages));
         
         const filesData = [];
@@ -78,6 +104,14 @@ class P2PClient {
             filesData.push(fileData);
         });
         localStorage.setItem('fileHistory', JSON.stringify(filesData));
+        
+        const statesArray = [];
+        this.peerStates.forEach((state, peerId) => {
+            statesArray.push(state);
+        });
+        localStorage.setItem('peerStates', JSON.stringify(statesArray));
+        
+        localStorage.setItem('lastSyncTime', this.lastSyncTime.toString());
     }
     
     // Настройка обработчиков событий
@@ -113,6 +147,95 @@ class P2PClient {
         });
     }
     
+    // Запуск мониторинга пиров
+    startPeerMonitoring() {
+        // Проверка состояния пиров каждые 10 секунд
+        setInterval(() => {
+            this.checkPeersStatus();
+        }, 10000);
+        
+        // Автоматическое обновление SDP каждые 30 секунд для поддержания соединения
+        setInterval(() => {
+            this.refreshConnections();
+        }, 30000);
+    }
+    
+    // Проверка состояния пиров
+    checkPeersStatus() {
+        console.log('Проверка состояния пиров...');
+        
+        this.dataChannels.forEach((channel, peerId) => {
+            const isConnected = channel.readyState === 'open';
+            const wasConnected = this.connectedPeers.has(peerId);
+            
+            if (isConnected !== wasConnected) {
+                if (isConnected) {
+                    this.connectedPeers.add(peerId);
+                    console.log(`Пир ${peerId} теперь онлайн`);
+                    
+                    // При подключении синхронизируем историю
+                    this.syncWithPeer(peerId);
+                } else {
+                    this.connectedPeers.delete(peerId);
+                    console.log(`Пир ${peerId} теперь оффлайн`);
+                }
+                
+                this.updateUI();
+            }
+        });
+        
+        // Обновляем состояние сети
+        this.isOnline = this.connectedPeers.size > 0;
+        this.updateUI();
+    }
+    
+    // Обновление соединений
+    refreshConnections() {
+        if (this.connectedPeers.size === 0) return;
+        
+        console.log('Обновление соединений...');
+        
+        this.connectedPeers.forEach(peerId => {
+            const connection = this.connections.get(peerId);
+            if (connection && connection.connectionState === 'connected') {
+                // Для активных соединений можно обновить ICE кандидатов
+                this.refreshIceCandidates(peerId);
+            }
+        });
+    }
+    
+    // Обновление ICE кандидатов
+    async refreshIceCandidates(peerId) {
+        try {
+            const connection = this.connections.get(peerId);
+            if (!connection) return;
+            
+            // Создаем новое предложение для обновления ICE кандидатов
+            const offer = await connection.createOffer();
+            await connection.setLocalDescription(offer);
+            
+            console.log(`Обновлены ICE кандидаты для пира ${peerId}`);
+        } catch (error) {
+            console.error(`Ошибка обновления ICE кандидатов для ${peerId}:`, error);
+        }
+    }
+    
+    // Синхронизация с пиром
+    syncWithPeer(peerId) {
+        // Отправляем запрос на синхронизацию
+        const syncRequest = {
+            type: 'sync_request',
+            sender: this.localPeerId,
+            timestamp: Date.now(),
+            lastSync: this.lastSyncTime,
+            messageCount: this.messages.length,
+            fileCount: this.files.size
+        };
+        
+        this.sendToPeer(peerId, JSON.stringify(syncRequest));
+        console.log(`Отправлен запрос синхронизации пиру ${peerId}`);
+    }
+    
     // Обновление интерфейса
     updateUI() {
         document.getElementById('localPeerId').textContent = this.localPeerId;
@@ -137,7 +260,7 @@ class P2PClient {
         const peerList = document.getElementById('peerList');
         peerList.innerHTML = '';
         
-        this.peers.forEach(peerId => {
+        this.peers.forEach((peerData, peerId) => {
             const isConnected = this.connectedPeers.has(peerId);
             
             const peerItem = document.createElement('div');
@@ -169,7 +292,10 @@ class P2PClient {
         const chatMessages = document.getElementById('chatMessages');
         chatMessages.innerHTML = '';
         
-        this.messages.forEach(msg => {
+        // Сортируем сообщения по времени
+        const sortedMessages = [...this.messages].sort((a, b) => a.timestamp - b.timestamp);
+        
+        sortedMessages.forEach(msg => {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${msg.sender === this.localPeerId ? 'own' : 'other'}`;
             
@@ -214,6 +340,16 @@ class P2PClient {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
     
+    // Кодирование в Base64
+    encodeBase64(str) {
+        return btoa(unescape(encodeURIComponent(str)));
+    }
+    
+    // Декодирование из Base64
+    decodeBase64(str) {
+        return decodeURIComponent(escape(atob(str)));
+    }
+    
     // Создание предложения для подключения
     async createOffer() {
         try {
@@ -249,9 +385,14 @@ class P2PClient {
                 console.log(`Состояние соединения: ${connection.connectionState}`);
                 
                 if (connection.connectionState === 'connected') {
+                    // Обновляем ID пира на реальный после установки соединения
+                    this.finalizePeerConnection(newPeerId);
                     this.connectedPeers.add(newPeerId);
                     this.isOnline = true;
                     this.updateUI();
+                    
+                    // Синхронизируем историю после подключения
+                    this.syncWithPeer(newPeerId);
                 } else if (connection.connectionState === 'disconnected' || 
                           connection.connectionState === 'failed') {
                     this.connectedPeers.delete(newPeerId);
@@ -279,6 +420,22 @@ class P2PClient {
         }
     }
     
+    // Финализация подключения к пиру
+    finalizePeerConnection(temporaryPeerId) {
+        // В реальном приложении здесь должен быть механизм определения реального ID пира
+        // Для демонстрации оставляем временный ID
+        console.log(`Подключение к пиру ${temporaryPeerId} установлено`);
+        
+        // Сохраняем пира
+        if (!this.peers.has(temporaryPeerId)) {
+            this.peers.set(temporaryPeerId, {
+                id: temporaryPeerId,
+                lastSeen: Date.now(),
+                connectionCount: 1
+            });
+        }
+    }
+    
     // Обновление отображения предложения после сбора ICE кандидатов
     updateOfferDisplay(peerId) {
         const connection = this.connections.get(peerId);
@@ -292,10 +449,14 @@ class P2PClient {
             offer: offer
         };
         
-        document.getElementById('localOfferData').value = JSON.stringify(signalData, null, 2);
+        // Кодируем в Base64 для удобства обмена
+        const jsonStr = JSON.stringify(signalData);
+        const base64Data = this.encodeBase64(jsonStr);
+        
+        document.getElementById('localOfferData').value = base64Data;
         document.getElementById('copyOfferBtn').disabled = false;
         
-        console.log('Предложение готово для копирования');
+        console.log('Предложение готово для копирования (в формате Base64)');
     }
     
     // Копирование предложения в буфер обмена
@@ -317,7 +478,16 @@ class P2PClient {
         }
         
         try {
-            const signalData = JSON.parse(signalDataStr);
+            // Пытаемся декодировать из Base64
+            let decodedData;
+            try {
+                decodedData = this.decodeBase64(signalDataStr);
+            } catch (e) {
+                // Если не Base64, используем как есть
+                decodedData = signalDataStr;
+            }
+            
+            const signalData = JSON.parse(decodedData);
             
             if (signalData.type === 'offer') {
                 await this.handleOffer(signalData);
@@ -348,7 +518,13 @@ class P2PClient {
             // Создаем соединение
             const connection = new RTCPeerConnection(this.rtcConfig);
             this.connections.set(peerId, connection);
-            this.peers.add(peerId);
+            
+            // Добавляем пира в список
+            this.peers.set(peerId, {
+                id: peerId,
+                lastSeen: Date.now(),
+                connectionCount: 1
+            });
             
             // Обработчик входящего канала данных
             connection.ondatachannel = (event) => {
@@ -371,6 +547,9 @@ class P2PClient {
                     this.connectedPeers.add(peerId);
                     this.isOnline = true;
                     this.updateUI();
+                    
+                    // Синхронизируем историю после подключения
+                    this.syncWithPeer(peerId);
                 }
             };
             
@@ -389,8 +568,12 @@ class P2PClient {
                 answer: answer
             };
             
+            // Кодируем в Base64
+            const jsonStr = JSON.stringify(answerSignalData);
+            const base64Data = this.encodeBase64(jsonStr);
+            
             // Показываем ответ для копирования
-            document.getElementById('localOfferData').value = JSON.stringify(answerSignalData, null, 2);
+            document.getElementById('localOfferData').value = base64Data;
             document.getElementById('copyOfferBtn').disabled = false;
             
             console.log('Ответ создан, отправьте его инициатору подключения');
@@ -416,7 +599,11 @@ class P2PClient {
             const connection = this.pendingOffer.connection;
             
             // Добавляем пира в список
-            this.peers.add(peerId);
+            this.peers.set(peerId, {
+                id: peerId,
+                lastSeen: Date.now(),
+                connectionCount: 1
+            });
             
             // Обновляем ID пира на реальный
             this.connections.delete(this.pendingOffer.peerId);
@@ -470,36 +657,119 @@ class P2PClient {
             const message = JSON.parse(data);
             
             if (message.type === 'text') {
-                this.messages.push({
+                this.addMessageToHistory({
                     id: this.generateMessageId(),
                     type: 'text',
                     content: message.content,
                     sender: peerId,
-                    timestamp: Date.now()
+                    timestamp: message.timestamp || Date.now()
                 });
                 
-                this.updateUI();
                 console.log(`Получено сообщение от ${peerId}: ${message.content}`);
                 
             } else if (message.type === 'file') {
                 const fileData = message.fileData;
                 this.files.set(fileData.id, fileData);
                 
-                this.messages.push({
+                this.addMessageToHistory({
                     id: this.generateMessageId(),
                     type: 'file',
                     fileId: fileData.id,
                     sender: peerId,
-                    timestamp: Date.now()
+                    timestamp: message.timestamp || Date.now()
                 });
                 
-                this.updateUI();
                 console.log(`Получен файл от ${peerId}: ${fileData.name}`);
+                
+            } else if (message.type === 'sync_request') {
+                // Обработка запроса синхронизации
+                this.handleSyncRequest(message, peerId);
+            } else if (message.type === 'sync_response') {
+                // Обработка ответа синхронизации
+                this.handleSyncResponse(message, peerId);
             }
             
         } catch (error) {
             console.error('Ошибка обработки входящего сообщения:', error);
         }
+    }
+    
+    // Обработка запроса синхронизации
+    handleSyncRequest(request, peerId) {
+        console.log(`Получен запрос синхронизации от ${peerId}`);
+        
+        // Находим сообщения, которых нет у запросившего пира
+        const missingMessages = this.messages.filter(msg => 
+            msg.timestamp > request.lastSync
+        );
+        
+        // Находим файлы, которых нет у запросившего пира
+        const missingFiles = [];
+        this.files.forEach((fileData, fileId) => {
+            if (!request.fileIds || !request.fileIds.includes(fileId)) {
+                missingFiles.push(fileData);
+            }
+        });
+        
+        // Отправляем ответ синхронизации
+        const syncResponse = {
+            type: 'sync_response',
+            sender: this.localPeerId,
+            timestamp: Date.now(),
+            messages: missingMessages,
+            files: missingFiles
+        };
+        
+        this.sendToPeer(peerId, JSON.stringify(syncResponse));
+        console.log(`Отправлен ответ синхронизации пиру ${peerId} (${missingMessages.length} сообщений, ${missingFiles.length} файлов)`);
+    }
+    
+    // Обработка ответа синхронизации
+    handleSyncResponse(response, peerId) {
+        console.log(`Получен ответ синхронизации от ${peerId}`);
+        
+        let addedMessages = 0;
+        let addedFiles = 0;
+        
+        // Добавляем отсутствующие сообщения
+        response.messages.forEach(msg => {
+            if (!this.messages.find(m => m.id === msg.id)) {
+                this.addMessageToHistory(msg);
+                addedMessages++;
+            }
+        });
+        
+        // Добавляем отсутствующие файлы
+        response.files.forEach(fileData => {
+            if (!this.files.has(fileData.id)) {
+                this.files.set(fileData.id, fileData);
+                addedFiles++;
+            }
+        });
+        
+        // Обновляем время последней синхронизации
+        this.lastSyncTime = Math.max(this.lastSyncTime, response.timestamp);
+        
+        console.log(`Синхронизировано: ${addedMessages} сообщений, ${addedFiles} файлов`);
+        
+        if (addedMessages > 0 || addedFiles > 0) {
+            this.updateUI();
+        }
+    }
+    
+    // Добавление сообщения в историю с проверкой на дубликаты
+    addMessageToHistory(message) {
+        // Проверяем, нет ли уже такого сообщения
+        const existingMessage = this.messages.find(m => m.id === message.id);
+        if (!existingMessage) {
+            this.messages.push(message);
+            
+            // Обновляем время последней синхронизации
+            this.lastSyncTime = Math.max(this.lastSyncTime, message.timestamp);
+            
+            return true;
+        }
+        return false;
     }
     
     // Удаление пира
@@ -540,12 +810,13 @@ class P2PClient {
             timestamp: Date.now()
         };
         
-        this.messages.push({
+        const messageWithId = {
             id: this.generateMessageId(),
             ...message
-        });
+        };
         
-        this.broadcastToPeers(JSON.stringify(message));
+        this.addMessageToHistory(messageWithId);
+        this.broadcastToPeers(JSON.stringify(messageWithId));
         
         messageInput.value = '';
         
@@ -574,14 +845,15 @@ class P2PClient {
             
             this.files.set(fileMessage.fileData.id, fileMessage.fileData);
             
-            this.messages.push({
+            const messageWithId = {
                 id: this.generateMessageId(),
                 type: 'file',
                 fileId: fileMessage.fileData.id,
                 sender: this.localPeerId,
                 timestamp: Date.now()
-            });
+            };
             
+            this.addMessageToHistory(messageWithId);
             this.broadcastToPeers(JSON.stringify(fileMessage));
             
             this.updateUI();
@@ -601,6 +873,16 @@ class P2PClient {
             reader.onerror = reject;
             reader.readAsDataURL(file);
         });
+    }
+    
+    // Отправка сообщения конкретному пиру
+    sendToPeer(peerId, message) {
+        const channel = this.dataChannels.get(peerId);
+        if (channel && channel.readyState === 'open') {
+            channel.send(message);
+            return true;
+        }
+        return false;
     }
     
     // Рассылка сообщения всем подключенным пирам
