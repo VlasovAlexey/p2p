@@ -7,6 +7,23 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- Модальное окно восстановления соединений -->
+    <div id="reconnectModal" class="modal">
+        <div class="modal-content">
+            <h3>Восстановление соединений</h3>
+            <p>Пытаемся восстановить соединения с известными пирами...</p>
+            <div class="reconnect-progress">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="reconnect-stats" id="reconnectStats">
+                    Подключено: 0/0
+                </div>
+            </div>
+            <button id="cancelReconnect" class="cancel-btn">Отмена</button>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <div class="logo">P2P Messenger</div>
@@ -29,6 +46,7 @@
                         <div class="signal-controls">
                             <button id="createOfferBtn">Создать предложение</button>
                             <button id="copyOfferBtn" disabled>Копировать предложение</button>
+                            <button id="clearChatBtn" class="danger-btn">Очистить чат</button>
                         </div>
                         <textarea class="signal-data" id="localOfferData" placeholder="Ваше предложение появится здесь..." readonly></textarea>
                         

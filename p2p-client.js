@@ -25,9 +25,17 @@ class P2PClient {
         this.files = new Map();
         this.pendingOffer = null; // Ожидающее ответа предложение
         
-        // Для синхронизации
+        // Для синхронизации и восстановления
         this.lastSyncTime = 0;
         this.peerStates = new Map(); // Состояния пиров для синхронизации
+        this.reconnectAttempts = new Map(); // Количество попыток переподключения
+        this.maxReconnectAttempts = 3;
+        this.reconnectTimeout = 5000; // 5 секунд между попытками
+        
+        // Для модального окна восстановления
+        this.reconnectModal = null;
+        this.reconnectInProgress = false;
+        this.reconnectStartTime = 0;
         
         this.init();
     }
@@ -36,10 +44,220 @@ class P2PClient {
     init() {
         this.loadFromStorage();
         this.setupEventListeners();
+        this.setupModal();
         this.updateUI();
         this.startPeerMonitoring();
         
+        // Автоматическое восстановление соединений при старте
+        this.autoReconnectOnStart();
+        
         console.log(`P2P клиент инициализирован с ID: ${this.localPeerId}`);
+    }
+    
+    // Настройка модального окна
+    setupModal() {
+        this.reconnectModal = document.getElementById('reconnectModal');
+        document.getElementById('cancelReconnect').addEventListener('click', () => {
+            this.cancelReconnect();
+        });
+    }
+    
+    // Показать модальное окно восстановления
+    showReconnectModal() {
+        if (this.reconnectModal) {
+            this.reconnectModal.style.display = 'block';
+            this.updateReconnectProgress();
+        }
+    }
+    
+    // Скрыть модальное окно восстановления
+    hideReconnectModal() {
+        if (this.reconnectModal) {
+            this.reconnectModal.style.display = 'none';
+        }
+    }
+    
+    // Обновление прогресса восстановления
+    updateReconnectProgress() {
+        const totalPeers = this.peers.size;
+        const connectedPeers = this.connectedPeers.size;
+        const progress = totalPeers > 0 ? (connectedPeers / totalPeers) * 100 : 0;
+        
+        document.getElementById('progressFill').style.width = `${progress}%`;
+        document.getElementById('reconnectStats').textContent = 
+            `Подключено: ${connectedPeers}/${totalPeers}`;
+    }
+    
+    // Отмена восстановления соединений
+    cancelReconnect() {
+        this.reconnectInProgress = false;
+        this.hideReconnectModal();
+        console.log('Восстановление соединений отменено пользователем');
+    }
+    
+    // Автоматическое восстановление соединений при старте
+    async autoReconnectOnStart() {
+        const knownPeers = Array.from(this.peers.keys());
+        if (knownPeers.length === 0) return;
+        
+        console.log(`Попытка восстановления соединений с ${knownPeers.length} пирами...`);
+        
+        this.reconnectInProgress = true;
+        this.reconnectStartTime = Date.now();
+        
+        // Показываем модальное окно через 2 секунды, если восстановление еще не завершено
+        setTimeout(() => {
+            if (this.reconnectInProgress && this.connectedPeers.size < this.peers.size) {
+                this.showReconnectModal();
+            }
+        }, 2000);
+        
+        // Пытаемся подключиться ко всем известным пирам
+        for (const peerId of knownPeers) {
+            if (!this.connectedPeers.has(peerId)) {
+                await this.reconnectToPeer(peerId);
+            }
+        }
+        
+        // Скрываем модальное окно после завершения
+        this.reconnectInProgress = false;
+        this.hideReconnectModal();
+        
+        const duration = Date.now() - this.reconnectStartTime;
+        console.log(`Восстановление соединений завершено за ${duration}ms. Подключено: ${this.connectedPeers.size}/${knownPeers.length}`);
+    }
+    
+    // Восстановление соединения с конкретным пиром
+    async reconnectToPeer(peerId) {
+        const peerData = this.peers.get(peerId);
+        if (!peerData || this.connectedPeers.has(peerId)) return;
+        
+        // Проверяем количество попыток
+        const attempts = this.reconnectAttempts.get(peerId) || 0;
+        if (attempts >= this.maxReconnectAttempts) {
+            console.log(`Превышено максимальное количество попыток подключения к пиру ${peerId}`);
+            return;
+        }
+        
+        this.reconnectAttempts.set(peerId, attempts + 1);
+        
+        try {
+            console.log(`Попытка восстановления соединения с пиром ${peerId} (попытка ${attempts + 1})`);
+            
+            // Если есть сохраненные сигнальные данные, используем их
+            if (peerData.lastOffer) {
+                await this.connectWithSavedOffer(peerId, peerData.lastOffer);
+            } else {
+                // Иначе создаем новое предложение
+                await this.createReconnectionOffer(peerId);
+            }
+            
+            // Обновляем прогресс в модальном окне
+            this.updateReconnectProgress();
+            
+        } catch (error) {
+            console.error(`Ошибка восстановления соединения с пиром ${peerId}:`, error);
+            
+            // Планируем следующую попытку, если не превышен лимит
+            if (attempts + 1 < this.maxReconnectAttempts) {
+                setTimeout(() => {
+                    this.reconnectToPeer(peerId);
+                }, this.reconnectTimeout);
+            }
+        }
+    }
+    
+    // Создание предложения для повторного подключения
+    async createReconnectionOffer(peerId) {
+        const connection = new RTCPeerConnection(this.rtcConfig);
+        this.connections.set(peerId, connection);
+        
+        // Создаем канал данных
+        const dataChannel = connection.createDataChannel('messenger', { ordered: true });
+        this.setupDataChannel(dataChannel, peerId);
+        
+        // Обработчик входящего канала данных
+        connection.ondatachannel = (event) => {
+            const incomingChannel = event.channel;
+            this.setupDataChannel(incomingChannel, peerId);
+        };
+        
+        // Обработчики событий соединения
+        this.setupConnectionHandlers(connection, peerId);
+        
+        // Создаем предложение
+        const offer = await connection.createOffer();
+        await connection.setLocalDescription(offer);
+        
+        // Сохраняем предложение для будущих попыток переподключения
+        this.savePeerOffer(peerId, offer);
+        
+        console.log(`Создано предложение для повторного подключения к пиру ${peerId}`);
+    }
+    
+    // Подключение с использованием сохраненного предложения
+    async connectWithSavedOffer(peerId, savedOffer) {
+        const connection = new RTCPeerConnection(this.rtcConfig);
+        this.connections.set(peerId, connection);
+        
+        // Обработчик входящего канала данных
+        connection.ondatachannel = (event) => {
+            const incomingChannel = event.channel;
+            this.setupDataChannel(incomingChannel, peerId);
+        };
+        
+        // Обработчики событий соединения
+        this.setupConnectionHandlers(connection, peerId);
+        
+        // Создаем канал данных
+        const dataChannel = connection.createDataChannel('messenger', { ordered: true });
+        this.setupDataChannel(dataChannel, peerId);
+        
+        // Используем сохраненное предложение
+        await connection.setLocalDescription(savedOffer);
+        
+        console.log(`Использовано сохраненное предложение для подключения к пиру ${peerId}`);
+    }
+    
+    // Настройка обработчиков событий соединения
+    setupConnectionHandlers(connection, peerId) {
+        // Обработчик ICE кандидатов
+        connection.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log(`Новый ICE кандидат для ${peerId}:`, event.candidate);
+            } else {
+                console.log(`Все ICE кандидаты собраны для ${peerId}`);
+            }
+        };
+        
+        // Обработчик изменения состояния соединения
+        connection.onconnectionstatechange = () => {
+            console.log(`Состояние соединения с ${peerId}: ${connection.connectionState}`);
+            
+            if (connection.connectionState === 'connected') {
+                this.connectedPeers.add(peerId);
+                this.isOnline = true;
+                this.reconnectAttempts.set(peerId, 0); // Сбрасываем счетчик попыток
+                this.updateUI();
+                
+                // Синхронизируем историю после подключения
+                this.syncWithPeer(peerId);
+            } else if (connection.connectionState === 'disconnected' || 
+                      connection.connectionState === 'failed') {
+                this.connectedPeers.delete(peerId);
+                if (this.connectedPeers.size === 0) {
+                    this.isOnline = false;
+                }
+                this.updateUI();
+                
+                // Пытаемся переподключиться
+                if (!this.reconnectInProgress) {
+                    setTimeout(() => {
+                        this.reconnectToPeer(peerId);
+                    }, this.reconnectTimeout);
+                }
+            }
+        };
     }
     
     // Генерация уникального ID для пира
@@ -114,6 +332,15 @@ class P2PClient {
         localStorage.setItem('lastSyncTime', this.lastSyncTime.toString());
     }
     
+    // Сохранение предложения для пира
+    savePeerOffer(peerId, offer) {
+        const peerData = this.peers.get(peerId) || { id: peerId };
+        peerData.lastOffer = offer;
+        peerData.lastSeen = Date.now();
+        this.peers.set(peerId, peerData);
+        this.saveToStorage();
+    }
+    
     // Настройка обработчиков событий
     setupEventListeners() {
         document.getElementById('sendBtn').addEventListener('click', () => {
@@ -144,6 +371,10 @@ class P2PClient {
         
         document.getElementById('processSignalBtn').addEventListener('click', () => {
             this.processSignalData();
+        });
+        
+        document.getElementById('clearChatBtn').addEventListener('click', () => {
+            this.clearChat();
         });
     }
     
@@ -178,6 +409,13 @@ class P2PClient {
                 } else {
                     this.connectedPeers.delete(peerId);
                     console.log(`Пир ${peerId} теперь оффлайн`);
+                    
+                    // Пытаемся переподключиться
+                    if (!this.reconnectInProgress) {
+                        setTimeout(() => {
+                            this.reconnectToPeer(peerId);
+                        }, this.reconnectTimeout);
+                    }
                 }
                 
                 this.updateUI();
@@ -214,6 +452,9 @@ class P2PClient {
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
             
+            // Сохраняем обновленное предложение
+            this.savePeerOffer(peerId, offer);
+            
             console.log(`Обновлены ICE кандидаты для пира ${peerId}`);
         } catch (error) {
             console.error(`Ошибка обновления ICE кандидатов для ${peerId}:`, error);
@@ -234,6 +475,45 @@ class P2PClient {
         
         this.sendToPeer(peerId, JSON.stringify(syncRequest));
         console.log(`Отправлен запрос синхронизации пиру ${peerId}`);
+    }
+    
+    // Очистка чата
+    clearChat() {
+        if (confirm('Вы уверены, что хотите очистить всю историю чата? Это действие нельзя отменить.')) {
+            this.messages = [];
+            this.files.clear();
+            this.lastSyncTime = 0;
+            this.saveToStorage();
+            this.updateUI();
+            console.log('Чат очищен');
+        }
+    }
+    
+    // Полная очистка всех данных (команда kill)
+    killAllData() {
+        // Очищаем все локальные данные
+        this.messages = [];
+        this.files.clear();
+        this.peers.clear();
+        this.connections.clear();
+        this.dataChannels.clear();
+        this.connectedPeers.clear();
+        this.peerStates.clear();
+        this.lastSyncTime = 0;
+        
+        // Очищаем LocalStorage
+        localStorage.removeItem('knownPeers');
+        localStorage.removeItem('messageHistory');
+        localStorage.removeItem('fileHistory');
+        localStorage.removeItem('peerStates');
+        localStorage.removeItem('lastSyncTime');
+        
+        // Генерируем новый ID пира
+        localStorage.removeItem('peerId');
+        this.localPeerId = this.generatePeerId();
+        
+        this.updateUI();
+        console.log('Все данные очищены (команда kill)');
     }
     
     // Обновление интерфейса
@@ -400,6 +680,13 @@ class P2PClient {
                         this.isOnline = false;
                     }
                     this.updateUI();
+                    
+                    // Пытаемся переподключиться
+                    if (!this.reconnectInProgress) {
+                        setTimeout(() => {
+                            this.reconnectToPeer(newPeerId);
+                        }, this.reconnectTimeout);
+                    }
                 }
             };
             
@@ -433,6 +720,12 @@ class P2PClient {
                 lastSeen: Date.now(),
                 connectionCount: 1
             });
+        }
+        
+        // Сохраняем предложение для будущих переподключений
+        const connection = this.connections.get(temporaryPeerId);
+        if (connection && connection.localDescription) {
+            this.savePeerOffer(temporaryPeerId, connection.localDescription);
         }
     }
     
@@ -548,8 +841,31 @@ class P2PClient {
                     this.isOnline = true;
                     this.updateUI();
                     
+                    // Сохраняем ответ для будущих переподключений
+                    if (connection.localDescription) {
+                        const peerData = this.peers.get(peerId);
+                        if (peerData) {
+                            peerData.lastAnswer = connection.localDescription;
+                            this.saveToStorage();
+                        }
+                    }
+                    
                     // Синхронизируем историю после подключения
                     this.syncWithPeer(peerId);
+                } else if (connection.connectionState === 'disconnected' || 
+                          connection.connectionState === 'failed') {
+                    this.connectedPeers.delete(peerId);
+                    if (this.connectedPeers.size === 0) {
+                        this.isOnline = false;
+                    }
+                    this.updateUI();
+                    
+                    // Пытаемся переподключиться
+                    if (!this.reconnectInProgress) {
+                        setTimeout(() => {
+                            this.reconnectToPeer(peerId);
+                        }, this.reconnectTimeout);
+                    }
                 }
             };
             
@@ -612,6 +928,11 @@ class P2PClient {
             // Устанавливаем удаленный ответ
             await connection.setRemoteDescription(signalData.answer);
             
+            // Сохраняем предложение для будущих переподключений
+            if (connection.localDescription) {
+                this.savePeerOffer(peerId, connection.localDescription);
+            }
+            
             this.pendingOffer = null;
             
             console.log(`Ответ установлен, соединение с ${peerId} должно установиться`);
@@ -642,6 +963,13 @@ class P2PClient {
             }
             
             this.updateUI();
+            
+            // Пытаемся переподключиться
+            if (!this.reconnectInProgress) {
+                setTimeout(() => {
+                    this.reconnectToPeer(peerId);
+                }, this.reconnectTimeout);
+            }
         };
         
         channel.onmessage = (event) => {
@@ -657,6 +985,13 @@ class P2PClient {
             const message = JSON.parse(data);
             
             if (message.type === 'text') {
+                // Проверяем команду kill
+                if (message.content === 'kill') {
+                    console.log(`Получена команда kill от ${peerId}`);
+                    this.killAllData();
+                    return;
+                }
+                
                 this.addMessageToHistory({
                     id: this.generateMessageId(),
                     type: 'text',
@@ -687,6 +1022,10 @@ class P2PClient {
             } else if (message.type === 'sync_response') {
                 // Обработка ответа синхронизации
                 this.handleSyncResponse(message, peerId);
+            } else if (message.type === 'kill_command') {
+                // Обработка команды kill от другого пира
+                console.log(`Получена команда kill от ${peerId}`);
+                this.killAllData();
             }
             
         } catch (error) {
@@ -766,6 +1105,20 @@ class P2PClient {
             
             // Обновляем время последней синхронизации
             this.lastSyncTime = Math.max(this.lastSyncTime, message.timestamp);
+            
+            // Проверяем команду kill
+            if (message.type === 'text' && message.content === 'kill') {
+                console.log('Обнаружена команда kill в истории');
+                this.killAllData();
+                
+                // Рассылаем команду kill всем пирам
+                const killCommand = {
+                    type: 'kill_command',
+                    sender: this.localPeerId,
+                    timestamp: Date.now()
+                };
+                this.broadcastToPeers(JSON.stringify(killCommand));
+            }
             
             return true;
         }
