@@ -1,0 +1,935 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P WebRTC Messenger</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        
+        body {
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        header {
+            background-color: #4a76a8;
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        .status {
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #2ecc71;
+            margin-right: 8px;
+        }
+        
+        .status.offline .status-indicator {
+            background-color: #e74c3c;
+        }
+        
+        main {
+            display: flex;
+            height: 70vh;
+        }
+        
+        .sidebar {
+            width: 30%;
+            border-right: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .peers-section, .discovery-section {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        h2 {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .peer-list {
+            max-height: 150px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+        
+        .peer-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 5px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .peer-info {
+            display: flex;
+            align-items: center;
+        }
+        
+        .peer-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .peer-online {
+            background-color: #2ecc71;
+        }
+        
+        .peer-offline {
+            background-color: #e74c3c;
+        }
+        
+        .peer-actions button {
+            background: none;
+            border: none;
+            color: #e74c3c;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .add-peer-form {
+            display: flex;
+            margin-top: 10px;
+        }
+        
+        .add-peer-form input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px 0 0 4px;
+        }
+        
+        .add-peer-form button {
+            padding: 8px 12px;
+            background-color: #4a76a8;
+            color: white;
+            border: none;
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+        }
+        
+        .discovery-methods {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .discovery-methods button {
+            padding: 8px;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            text-align: left;
+        }
+        
+        .discovery-methods button:hover {
+            background-color: #e0e0e0;
+        }
+        
+        .chat-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+        
+        .message.own {
+            background-color: #e3f2fd;
+            margin-left: auto;
+        }
+        
+        .message.other {
+            background-color: #f5f5f5;
+        }
+        
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .message-content {
+            word-break: break-word;
+        }
+        
+        .file-message {
+            padding: 8px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+        
+        .file-message a {
+            color: #4a76a8;
+            text-decoration: none;
+        }
+        
+        .file-message a:hover {
+            text-decoration: underline;
+        }
+        
+        .chat-input {
+            display: flex;
+            padding: 15px;
+            gap: 10px;
+        }
+        
+        .message-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: none;
+            height: 60px;
+        }
+        
+        .file-input-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .send-button {
+            padding: 10px 20px;
+            background-color: #4a76a8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        footer {
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-top: 1px solid #eee;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .network-info {
+            display: flex;
+            justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">P2P Messenger</div>
+            <div class="status" id="networkStatus">
+                <div class="status-indicator"></div>
+                <span>Сеть активна</span>
+            </div>
+        </header>
+        
+        <main>
+            <div class="sidebar">
+                <div class="peers-section">
+                    <h2>Подключенные пиры</h2>
+                    <div class="peer-list" id="peerList">
+                        <!-- Пиры будут добавляться здесь динамически -->
+                    </div>
+                    <div class="add-peer-form">
+                        <input type="text" id="peerIdInput" placeholder="ID пира для добавления">
+                        <button id="addPeerBtn">Добавить</button>
+                    </div>
+                </div>
+                
+                <div class="discovery-section">
+                    <h2>Поиск пиров</h2>
+                    <div class="discovery-methods">
+                        <button id="discoverPeersBtn">Начать поиск пиров</button>
+                        <button id="broadcastPresenceBtn">Объявить о себе</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-section">
+                <div class="chat-messages" id="chatMessages">
+                    <!-- Сообщения будут добавляться здесь динамически -->
+                </div>
+                
+                <div class="chat-input">
+                    <textarea class="message-input" id="messageInput" placeholder="Введите сообщение..."></textarea>
+                    <label class="file-input-label">
+                        📎
+                        <input type="file" class="file-input" id="fileInput">
+                    </label>
+                    <button class="send-button" id="sendBtn">Отправить</button>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <div class="network-info">
+                <span>ID этого узла: <strong id="localPeerId">...</strong></span>
+                <span>Подключено пиров: <strong id="connectedPeersCount">0</strong></span>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Основной класс P2P клиента
+        class P2PClient {
+            constructor() {
+                this.localPeerId = this.generatePeerId();
+                this.connections = new Map(); // ID пира -> RTCPeerConnection
+                this.dataChannels = new Map(); // ID пира -> RTCDataChannel
+                this.peers = new Set(); // Все известные пиры
+                this.connectedPeers = new Set(); // Только подключенные пиры
+                
+                // Конфигурация WebRTC
+                this.rtcConfig = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                };
+                
+                // Состояние приложения
+                this.isOnline = false;
+                this.messages = [];
+                this.files = new Map();
+                
+                this.init();
+            }
+            
+            // Инициализация приложения
+            init() {
+                this.loadFromStorage();
+                this.setupEventListeners();
+                this.updateUI();
+                this.startPeerDiscovery();
+                this.startConnectionMonitoring();
+                
+                console.log(`P2P клиент инициализирован с ID: ${this.localPeerId}`);
+            }
+            
+            // Генерация уникального ID для пира
+            generatePeerId() {
+                // Проверяем, есть ли уже сохраненный ID
+                const savedId = localStorage.getItem('peerId');
+                if (savedId) return savedId;
+                
+                // Генерируем новый ID
+                const newId = 'peer_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('peerId', newId);
+                return newId;
+            }
+            
+            // Загрузка данных из LocalStorage
+            loadFromStorage() {
+                // Загружаем список известных пиров
+                const savedPeers = localStorage.getItem('knownPeers');
+                if (savedPeers) {
+                    this.peers = new Set(JSON.parse(savedPeers));
+                }
+                
+                // Загружаем историю сообщений
+                const savedMessages = localStorage.getItem('messageHistory');
+                if (savedMessages) {
+                    this.messages = JSON.parse(savedMessages);
+                }
+                
+                // Загружаем информацию о файлах
+                const savedFiles = localStorage.getItem('fileHistory');
+                if (savedFiles) {
+                    const filesData = JSON.parse(savedFiles);
+                    filesData.forEach(fileData => {
+                        this.files.set(fileData.id, fileData);
+                    });
+                }
+            }
+            
+            // Сохранение данных в LocalStorage
+            saveToStorage() {
+                localStorage.setItem('knownPeers', JSON.stringify([...this.peers]));
+                localStorage.setItem('messageHistory', JSON.stringify(this.messages));
+                
+                const filesData = [];
+                this.files.forEach((fileData, id) => {
+                    filesData.push(fileData);
+                });
+                localStorage.setItem('fileHistory', JSON.stringify(filesData));
+            }
+            
+            // Настройка обработчиков событий
+            setupEventListeners() {
+                // Кнопка отправки сообщения
+                document.getElementById('sendBtn').addEventListener('click', () => {
+                    this.sendMessage();
+                });
+                
+                // Отправка сообщения по Enter
+                document.getElementById('messageInput').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+                
+                // Добавление пира
+                document.getElementById('addPeerBtn').addEventListener('click', () => {
+                    this.addPeer();
+                });
+                
+                // Отправка файла
+                document.getElementById('fileInput').addEventListener('change', (e) => {
+                    if (e.target.files.length > 0) {
+                        this.sendFile(e.target.files[0]);
+                        e.target.value = ''; // Сброс выбора файла
+                    }
+                });
+                
+                // Поиск пиров
+                document.getElementById('discoverPeersBtn').addEventListener('click', () => {
+                    this.discoverPeers();
+                });
+                
+                // Объявление о себе
+                document.getElementById('broadcastPresenceBtn').addEventListener('click', () => {
+                    this.broadcastPresence();
+                });
+            }
+            
+            // Обновление интерфейса
+            updateUI() {
+                // Обновляем ID пира
+                document.getElementById('localPeerId').textContent = this.localPeerId;
+                
+                // Обновляем список пиров
+                this.updatePeerList();
+                
+                // Обновляем счетчик подключенных пиров
+                document.getElementById('connectedPeersCount').textContent = this.connectedPeers.size;
+                
+                // Обновляем статус сети
+                const networkStatus = document.getElementById('networkStatus');
+                if (this.isOnline) {
+                    networkStatus.classList.remove('offline');
+                    networkStatus.querySelector('span').textContent = 'Сеть активна';
+                } else {
+                    networkStatus.classList.add('offline');
+                    networkStatus.querySelector('span').textContent = 'Сеть неактивна';
+                }
+                
+                // Обновляем историю сообщений
+                this.updateMessageHistory();
+                
+                // Сохраняем данные
+                this.saveToStorage();
+            }
+            
+            // Обновление списка пиров в интерфейсе
+            updatePeerList() {
+                const peerList = document.getElementById('peerList');
+                peerList.innerHTML = '';
+                
+                this.peers.forEach(peerId => {
+                    const isConnected = this.connectedPeers.has(peerId);
+                    
+                    const peerItem = document.createElement('div');
+                    peerItem.className = 'peer-item';
+                    
+                    peerItem.innerHTML = `
+                        <div class="peer-info">
+                            <div class="peer-status ${isConnected ? 'peer-online' : 'peer-offline'}"></div>
+                            <span>${peerId}</span>
+                        </div>
+                        <div class="peer-actions">
+                            <button class="remove-peer" data-peer="${peerId}">✕</button>
+                        </div>
+                    `;
+                    
+                    peerList.appendChild(peerItem);
+                });
+                
+                // Добавляем обработчики для кнопок удаления
+                document.querySelectorAll('.remove-peer').forEach(button => {
+                    button.addEventListener('click', (e) => {
+                        const peerId = e.target.getAttribute('data-peer');
+                        this.removePeer(peerId);
+                    });
+                });
+            }
+            
+            // Обновление истории сообщений в интерфейсе
+            updateMessageHistory() {
+                const chatMessages = document.getElementById('chatMessages');
+                chatMessages.innerHTML = '';
+                
+                this.messages.forEach(msg => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `message ${msg.sender === this.localPeerId ? 'own' : 'other'}`;
+                    
+                    let contentHtml = '';
+                    if (msg.type === 'file') {
+                        const fileData = this.files.get(msg.fileId);
+                        if (fileData) {
+                            contentHtml = `
+                                <div class="file-message">
+                                    <strong>Файл:</strong> 
+                                    <a href="${fileData.url}" download="${fileData.name}">${fileData.name}</a>
+                                    <span>(${this.formatFileSize(fileData.size)})</span>
+                                </div>
+                            `;
+                        } else {
+                            contentHtml = `<div class="message-content">Файл не найден</div>`;
+                        }
+                    } else {
+                        contentHtml = `<div class="message-content">${msg.content}</div>`;
+                    }
+                    
+                    messageDiv.innerHTML = `
+                        <div class="message-header">
+                            <span>${msg.sender === this.localPeerId ? 'Вы' : msg.sender}</span>
+                            <span>${new Date(msg.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        ${contentHtml}
+                    `;
+                    
+                    chatMessages.appendChild(messageDiv);
+                });
+                
+                // Прокрутка вниз
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            
+            // Форматирование размера файла
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+            
+            // Добавление нового пира
+            addPeer() {
+                const peerIdInput = document.getElementById('peerIdInput');
+                const peerId = peerIdInput.value.trim();
+                
+                if (!peerId) {
+                    alert('Введите ID пира');
+                    return;
+                }
+                
+                if (peerId === this.localPeerId) {
+                    alert('Нельзя добавить себя в качестве пира');
+                    return;
+                }
+                
+                if (this.peers.has(peerId)) {
+                    alert('Этот пир уже добавлен');
+                    return;
+                }
+                
+                this.peers.add(peerId);
+                peerIdInput.value = '';
+                
+                // Пытаемся подключиться к новому пиру
+                this.connectToPeer(peerId);
+                
+                this.updateUI();
+                console.log(`Добавлен пир: ${peerId}`);
+            }
+            
+            // Удаление пира
+            removePeer(peerId) {
+                this.peers.delete(peerId);
+                
+                // Закрываем соединение, если оно есть
+                if (this.connections.has(peerId)) {
+                    this.connections.get(peerId).close();
+                    this.connections.delete(peerId);
+                }
+                
+                if (this.dataChannels.has(peerId)) {
+                    this.dataChannels.delete(peerId);
+                }
+                
+                this.connectedPeers.delete(peerId);
+                
+                this.updateUI();
+                console.log(`Удален пир: ${peerId}`);
+            }
+            
+            // Подключение к пиру
+            async connectToPeer(peerId) {
+                if (this.connections.has(peerId)) {
+                    console.log(`Уже подключен к пиру: ${peerId}`);
+                    return;
+                }
+                
+                try {
+                    // Создаем новое соединение
+                    const connection = new RTCPeerConnection(this.rtcConfig);
+                    this.connections.set(peerId, connection);
+                    
+                    // Создаем канал данных
+                    const dataChannel = connection.createDataChannel('messenger', {
+                        ordered: true
+                    });
+                    
+                    this.setupDataChannel(dataChannel, peerId);
+                    
+                    // Обработчик входящего канала данных
+                    connection.ondatachannel = (event) => {
+                        const incomingChannel = event.channel;
+                        this.setupDataChannel(incomingChannel, peerId);
+                    };
+                    
+                    // Генерируем предложение (offer)
+                    const offer = await connection.createOffer();
+                    await connection.setLocalDescription(offer);
+                    
+                    // В реальном приложении здесь должен быть сигнальный сервер
+                    // Для демонстрации имитируем обмен сигналами
+                    console.log(`Отправка предложения пиру: ${peerId}`);
+                    
+                    // Имитируем ответ от пира (в реальном приложении это должно приходить через сигнальный сервер)
+                    setTimeout(() => {
+                        this.simulateSignalExchange(peerId, offer);
+                    }, 1000);
+                    
+                } catch (error) {
+                    console.error(`Ошибка подключения к пиру ${peerId}:`, error);
+                }
+            }
+            
+            // Настройка канала данных
+            setupDataChannel(channel, peerId) {
+                channel.onopen = () => {
+                    console.log(`Канал данных открыт с пиром: ${peerId}`);
+                    this.connectedPeers.add(peerId);
+                    this.isOnline = true;
+                    this.updateUI();
+                };
+                
+                channel.onclose = () => {
+                    console.log(`Канал данных закрыт с пиром: ${peerId}`);
+                    this.connectedPeers.delete(peerId);
+                    
+                    // Если нет подключенных пиров, помечаем сеть как неактивную
+                    if (this.connectedPeers.size === 0) {
+                        this.isOnline = false;
+                    }
+                    
+                    this.updateUI();
+                };
+                
+                channel.onmessage = (event) => {
+                    this.handleIncomingMessage(event.data, peerId);
+                };
+                
+                this.dataChannels.set(peerId, channel);
+            }
+            
+            // Обработка входящих сообщений
+            handleIncomingMessage(data, peerId) {
+                try {
+                    const message = JSON.parse(data);
+                    
+                    if (message.type === 'text') {
+                        // Текстовое сообщение
+                        this.messages.push({
+                            id: this.generateMessageId(),
+                            type: 'text',
+                            content: message.content,
+                            sender: peerId,
+                            timestamp: Date.now()
+                        });
+                        
+                        this.updateUI();
+                        console.log(`Получено сообщение от ${peerId}: ${message.content}`);
+                        
+                    } else if (message.type === 'file') {
+                        // Файл
+                        const fileData = message.fileData;
+                        this.files.set(fileData.id, fileData);
+                        
+                        this.messages.push({
+                            id: this.generateMessageId(),
+                            type: 'file',
+                            fileId: fileData.id,
+                            sender: peerId,
+                            timestamp: Date.now()
+                        });
+                        
+                        this.updateUI();
+                        console.log(`Получен файл от ${peerId}: ${fileData.name}`);
+                    }
+                    
+                } catch (error) {
+                    console.error('Ошибка обработки входящего сообщения:', error);
+                }
+            }
+            
+            // Генерация ID для сообщения
+            generateMessageId() {
+                return 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            }
+            
+            // Отправка сообщения
+            sendMessage() {
+                const messageInput = document.getElementById('messageInput');
+                const content = messageInput.value.trim();
+                
+                if (!content) return;
+                
+                // Создаем объект сообщения
+                const message = {
+                    type: 'text',
+                    content: content,
+                    sender: this.localPeerId,
+                    timestamp: Date.now()
+                };
+                
+                // Добавляем в историю
+                this.messages.push({
+                    id: this.generateMessageId(),
+                    ...message
+                });
+                
+                // Отправляем всем подключенным пирам
+                this.broadcastToPeers(JSON.stringify(message));
+                
+                // Очищаем поле ввода
+                messageInput.value = '';
+                
+                this.updateUI();
+                console.log(`Отправлено сообщение: ${content}`);
+            }
+            
+            // Отправка файла
+            async sendFile(file) {
+                try {
+                    // Читаем файл как Data URL
+                    const fileData = await this.readFileAsDataURL(file);
+                    
+                    // Создаем объект файла
+                    const fileMessage = {
+                        type: 'file',
+                        fileData: {
+                            id: 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                            name: file.name,
+                            type: file.type,
+                            size: file.size,
+                            data: fileData,
+                            url: fileData // Для простоты используем Data URL как URL
+                        },
+                        sender: this.localPeerId,
+                        timestamp: Date.now()
+                    };
+                    
+                    // Сохраняем файл
+                    this.files.set(fileMessage.fileData.id, fileMessage.fileData);
+                    
+                    // Добавляем в историю сообщений
+                    this.messages.push({
+                        id: this.generateMessageId(),
+                        type: 'file',
+                        fileId: fileMessage.fileData.id,
+                        sender: this.localPeerId,
+                        timestamp: Date.now()
+                    });
+                    
+                    // Отправляем всем подключенным пирам
+                    this.broadcastToPeers(JSON.stringify(fileMessage));
+                    
+                    this.updateUI();
+                    console.log(`Отправлен файл: ${file.name}`);
+                    
+                } catch (error) {
+                    console.error('Ошибка отправки файла:', error);
+                    alert('Ошибка отправки файла');
+                }
+            }
+            
+            // Чтение файла как Data URL
+            readFileAsDataURL(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            }
+            
+            // Рассылка сообщения всем подключенным пирам
+            broadcastToPeers(message) {
+                this.dataChannels.forEach((channel, peerId) => {
+                    if (channel.readyState === 'open') {
+                        channel.send(message);
+                    }
+                });
+            }
+            
+            // Поиск пиров
+            discoverPeers() {
+                console.log('Запуск поиска пиров...');
+                
+                // В реальном приложении здесь должна быть логика поиска пиров в сети
+                // Для демонстрации просто имитируем обнаружение
+                setTimeout(() => {
+                    // Имитируем обнаружение случайного пира
+                    if (Math.random() > 0.5) {
+                        const fakePeerId = 'peer_' + Math.random().toString(36).substr(2, 9);
+                        if (!this.peers.has(fakePeerId) && fakePeerId !== this.localPeerId) {
+                            this.peers.add(fakePeerId);
+                            this.connectToPeer(fakePeerId);
+                            this.updateUI();
+                            console.log(`Обнаружен новый пир: ${fakePeerId}`);
+                        }
+                    }
+                }, 2000);
+            }
+            
+            // Объявление о себе в сети
+            broadcastPresence() {
+                console.log('Объявление о себе в сети...');
+                
+                // В реальном приложении здесь должна быть логика широковещательного оповещения
+                // Для демонстрации просто имитируем ответы
+                setTimeout(() => {
+                    // Имитируем ответ от другого пира
+                    if (Math.random() > 0.3) {
+                        const fakePeerId = 'peer_' + Math.random().toString(36).substr(2, 9);
+                        if (!this.peers.has(fakePeerId) && fakePeerId !== this.localPeerId) {
+                            this.peers.add(fakePeerId);
+                            this.connectToPeer(fakePeerId);
+                            this.updateUI();
+                            console.log(`Пир ${fakePeerId} ответил на объявление`);
+                        }
+                    }
+                }, 1500);
+            }
+            
+            // Запуск постоянного поиска пиров
+            startPeerDiscovery() {
+                // Запускаем поиск каждые 30 секунд
+                setInterval(() => {
+                    this.discoverPeers();
+                }, 30000);
+            }
+            
+            // Мониторинг соединений
+            startConnectionMonitoring() {
+                // Проверяем соединения каждые 10 секунд
+                setInterval(() => {
+                    this.checkConnections();
+                }, 10000);
+            }
+            
+            // Проверка активных соединений
+            checkConnections() {
+                console.log('Проверка активных соединений...');
+                
+                this.dataChannels.forEach((channel, peerId) => {
+                    if (channel.readyState !== 'open') {
+                        console.log(`Соединение с пиром ${peerId} разорвано, попытка переподключения...`);
+                        this.connectedPeers.delete(peerId);
+                        
+                        // Пытаемся переподключиться
+                        setTimeout(() => {
+                            this.connectToPeer(peerId);
+                        }, 2000);
+                    }
+                });
+                
+                this.updateUI();
+            }
+            
+            // Имитация обмена сигналами (в реальном приложении это должно быть через сигнальный сервер)
+            async simulateSignalExchange(peerId, offer) {
+                // В реальном приложении здесь должен быть код для отправки offer через сигнальный сервер
+                // и получения answer от другого пира
+    
+                // Имитируем создание answer
+                try {
+                    const connection = this.connections.get(peerId);
+                    
+                    // Имитируем получение answer от пира
+                    const answer = {
+                        type: 'answer',
+                        sdp: offer.sdp // В реальности это должен быть другой SDP
+                    };
+                    
+                    await connection.setRemoteDescription(answer);
+                    console.log(`Установлено удаленное описание для пира: ${peerId}`);
+                    
+                } catch (error) {
+                    console.error(`Ошибка при обмене сигналами с пиром ${peerId}:`, error);
+                }
+            }
+        }
+        
+        // Инициализация приложения после загрузки страницы
+        document.addEventListener('DOMContentLoaded', () => {
+            window.p2pClient = new P2PClient();
+        });
+    </script>
+</body>
+</html>
