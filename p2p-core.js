@@ -1,7 +1,8 @@
 ﻿﻿// Основной класс P2P клиента - ядро системы
 class P2PClient {
     constructor() {
-        this.localPeerId = this.generatePeerId();
+        this.db = window.indexedDBManager;
+        this.localPeerId = null;
         this.connections = new Map(); // ID пира -> RTCPeerConnection
         this.dataChannels = new Map(); // ID пира -> RTCDataChannel
         this.peers = new Map(); // Все известные пиры с метаданными
@@ -26,7 +27,7 @@ class P2PClient {
         // Состояние приложения
         this.isOnline = false;
         this.messages = [];
-        this.files = new Map();
+        this.files = new Map(); // Теперь это кэш для быстрого доступа к файлам
         this.pendingOffer = null; // Ожидающее ответа предложение
         
         // Для синхронизации и восстановления
@@ -52,33 +53,188 @@ class P2PClient {
         this.chunkSize = 16 * 1024; // 16KB chunks для стабильности
         this.maxFileSize = 100 * 1024 * 1024; // 100MB максимальный размер файла
         
+        // Инициализация будет асинхронной
         this.init();
     }
     
-    // Инициализация приложения
-    init() {
-        this.loadFromStorage();
-        this.setupEventListeners();
-        this.setupModals();
-        this.updateUI();
-        this.startPeerMonitoring();
-        
-        // Автоматическое восстановление соединений при старте
-        this.autoReconnectOnStart();
-        
-        console.log(`P2P клиент инициализирован с ID: ${this.localPeerId}`);
+    // Асинхронная инициализация приложения
+    async init() {
+        try {
+            await this.db.init();
+            await this.loadFromStorage();
+            this.setupEventListeners();
+            this.setupModals();
+            this.updateUI();
+            this.startPeerMonitoring();
+            
+            // Автоматическое восстановление соединений при старте
+            this.autoReconnectOnStart();
+            
+            console.log(`P2P клиент инициализирован с ID: ${this.localPeerId}`);
+        } catch (error) {
+            console.error('Ошибка инициализации P2P клиента:', error);
+            this.showMessageModal('Ошибка', 'Не удалось инициализировать приложение: ' + error.message);
+        }
     }
     
     // Генерация уникального ID для пира
-    generatePeerId() {
-        const savedId = localStorage.getItem('peerId');
+    async generatePeerId() {
+        let savedId = await this.db.getPeerId();
         if (savedId) return savedId;
         
         const newId = 'peer_' + Math.random().toString(36).substr(2, 9);
-        localStorage.setItem('peerId', newId);
+        await this.db.setPeerId(newId);
         return newId;
     }
     
+    // Загрузка данных из IndexedDB
+    async loadFromStorage() {
+        try {
+            console.log('Загрузка данных из IndexedDB...');
+            
+            // Загружаем ID пира
+            this.localPeerId = await this.generatePeerId();
+            
+            // Загружаем сообщения
+            const savedMessages = await this.db.getAllMessages();
+            this.messages = savedMessages || [];
+            console.log(`Загружено сообщений: ${this.messages.length}`);
+            
+            // Загружаем файлы в кэш
+            const savedFiles = await this.db.getAllFiles();
+            if (savedFiles) {
+                savedFiles.forEach(fileData => {
+                    if (fileData && fileData.id) {
+                        this.files.set(fileData.id, fileData);
+                    }
+                });
+            }
+            console.log(`Загружено файлов: ${this.files.size}`);
+            
+            // Загружаем пиров
+            const savedPeers = await this.db.getAllPeers();
+            if (savedPeers) {
+                savedPeers.forEach(peerData => {
+                    if (peerData && peerData.id && typeof peerData.id === 'string' && peerData.id.trim() !== '') {
+                        this.peers.set(peerData.id, peerData);
+                    }
+                });
+            }
+            console.log(`Загружено пиров: ${this.peers.size}`);
+            
+            // Загружаем состояния пиров
+            const savedPeerStates = await this.db.getAllPeerStates();
+            if (savedPeerStates) {
+                Object.keys(savedPeerStates).forEach(peerId => {
+                    if (peerId && savedPeerStates[peerId]) {
+                        this.peerStates.set(peerId, savedPeerStates[peerId]);
+                    }
+                });
+            }
+            
+            // Загружаем время последней синхронизации
+            this.lastSyncTime = await this.db.getLastSyncTime();
+            
+            console.log('Данные из IndexedDB успешно загружены');
+            
+        } catch (error) {
+            console.error('Ошибка загрузки данных из IndexedDB:', error);
+            // В случае ошибки инициализируем пустые данные
+            this.messages = [];
+            this.files.clear();
+            this.peers.clear();
+            this.peerStates.clear();
+            this.lastSyncTime = 0;
+        }
+    }
+    
+    // Сохранение данных в IndexedDB
+    async saveToStorage() {
+        try {
+            // Сохраняем время последней синхронизации
+            await this.db.setLastSyncTime(this.lastSyncTime);
+            
+            // Сохраняем состояния пиров
+            const statesArray = [];
+            this.peerStates.forEach((state, peerId) => {
+                if (state && peerId) {
+                    statesArray.push({ peerId, state });
+                }
+            });
+            if (statesArray.length > 0) {
+                // Очищаем старые состояния и сохраняем новые
+                await this.db.clearPeerStates();
+                for (const state of statesArray) {
+                    await this.db.savePeerState(state.peerId, state.state);
+                }
+            }
+            
+            console.log('Данные успешно сохранены в IndexedDB');
+            
+        } catch (error) {
+            console.error('Ошибка сохранения данных в IndexedDB:', error);
+        }
+    }
+
+    // Сохранение всех сообщений в IndexedDB
+    async saveMessagesToStorage() {
+        try {
+            if (this.messages.length > 0) {
+                await this.db.saveMessages(this.messages);
+            }
+        } catch (error) {
+            console.error('Ошибка сохранения сообщений в IndexedDB:', error);
+        }
+    }
+
+    // Сохранение всех пиров в IndexedDB
+    async savePeersToStorage() {
+        try {
+            const peersArray = Array.from(this.peers.values()).filter(peerData => 
+                peerData && typeof peerData === 'object' && peerData.id
+            );
+            
+            if (peersArray.length > 0) {
+                await this.db.savePeers(peersArray);
+            }
+        } catch (error) {
+            console.error('Ошибка сохранения пиров в IndexedDB:', error);
+        }
+    }
+
+    // Сохранение файла в IndexedDB
+    async saveFileToStorage(fileData) {
+        try {
+            if (fileData && fileData.id) {
+                await this.db.saveFile(fileData);
+                // Также обновляем кэш
+                this.files.set(fileData.id, fileData);
+            }
+        } catch (error) {
+            console.error('Ошибка сохранения файла в IndexedDB:', error);
+        }
+    }
+
+    // Получение файла из IndexedDB (с использованием кэша)
+    async getFile(fileId) {
+        // Сначала проверяем кэш
+        if (this.files.has(fileId)) {
+            return this.files.get(fileId);
+        }
+        
+        // Если нет в кэше, загружаем из базы
+        try {
+            const fileData = await this.db.getFile(fileId);
+            if (fileData) {
+                this.files.set(fileId, fileData);
+            }
+            return fileData;
+        } catch (error) {
+            console.error('Ошибка загрузки файла из IndexedDB:', error);
+            return null;
+        }
+    }
+
     // Настройка обработчиков событий соединения
     setupConnectionHandlers(connection, peerId) {
         // Обработчик ICE кандидатов
@@ -394,7 +550,8 @@ class P2PClient {
                 
             } else if (message.type === 'file') {
                 const fileData = message.fileData;
-                this.files.set(fileData.id, fileData);
+                // Сохраняем файл в IndexedDB
+                this.saveFileToStorage(fileData);
                 
                 this.addMessageToHistory({
                     id: this.generateMessageId(),
@@ -602,17 +759,18 @@ class P2PClient {
 
         this.broadcastToPeers(JSON.stringify(completeMessage));
 
-        // Сохраняем файл локально
+        // Сохраняем файл в IndexedDB
         const fileData = {
             id: transferId,
             name: transfer.file.name,
             type: transfer.file.type,
             size: transfer.file.size,
             data: await this.arrayBufferToDataURL(transfer.fileData, transfer.file.type),
-            url: await this.arrayBufferToDataURL(transfer.fileData, transfer.file.type)
+            url: await this.arrayBufferToDataURL(transfer.fileData, transfer.file.type),
+            timestamp: Date.now()
         };
 
-        this.files.set(transferId, fileData);
+        await this.saveFileToStorage(fileData);
 
         // Добавляем сообщение в историю
         this.addMessageToHistory({
@@ -698,11 +856,20 @@ class P2PClient {
     }
 
     // Очистка данных чата (без удаления пиров)
-    clearChatData() {
+    async clearChatData() {
         this.messages = [];
         this.files.clear();
         this.lastSyncTime = Date.now();
-        this.saveToStorage();
+        
+        // Очищаем данные в IndexedDB
+        try {
+            await this.db.clearMessages();
+            await this.db.clearFiles();
+            await this.db.setLastSyncTime(this.lastSyncTime);
+        } catch (error) {
+            console.error('Ошибка очистки данных чата в IndexedDB:', error);
+        }
+        
         this.updateUI();
         console.log('Данные чата очищены');
     }

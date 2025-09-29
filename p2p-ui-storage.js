@@ -202,13 +202,13 @@ P2PClient.prototype.updateMessageHistory = function() {
     // Сортируем сообщения по времени
     const sortedMessages = [...this.messages].sort((a, b) => a.timestamp - b.timestamp);
     
-    sortedMessages.forEach(msg => {
+    sortedMessages.forEach(async (msg) => {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${msg.sender === this.localPeerId ? 'own' : 'other'}`;
         
         let contentHtml = '';
         if (msg.type === 'file') {
-            const fileData = this.files.get(msg.fileId);
+            const fileData = await this.getFile(msg.fileId);
             if (fileData) {
                 contentHtml = `
                     <div class="file-message">
@@ -291,125 +291,8 @@ P2PClient.prototype.copyOfferToClipboard = function() {
     this.showMessageModal('Успех', 'Предложение скопировано в буфер обмена. Отправьте его другому пользователю.');
 };
 
-// Загрузка данных из LocalStorage
-P2PClient.prototype.loadFromStorage = function() {
-    // Очищаем существующие данные перед загрузкой
-    this.peers.clear();
-    this.messages = [];
-    this.files.clear();
-    this.peerStates.clear();
-    
-    // Загружаем список известных пиров с проверкой на валидность
-    const savedPeers = localStorage.getItem('knownPeers');
-    if (savedPeers) {
-        try {
-            const peersArray = JSON.parse(savedPeers);
-            peersArray.forEach(peerData => {
-                // Проверяем, что данные пира валидны
-                if (peerData && typeof peerData === 'object' && peerData.id && 
-                    typeof peerData.id === 'string' && peerData.id.trim() !== '') {
-                    this.peers.set(peerData.id, peerData);
-                } else {
-                    console.warn('Обнаружены некорректные данные пира:', peerData);
-                }
-            });
-        } catch (error) {
-            console.error('Ошибка загрузки списка пиров:', error);
-            // В случае ошибки очищаем некорректные данные
-            localStorage.removeItem('knownPeers');
-        }
-    }
-    
-    // Загружаем историю сообщений
-    const savedMessages = localStorage.getItem('messageHistory');
-    if (savedMessages) {
-        try {
-            this.messages = JSON.parse(savedMessages);
-        } catch (error) {
-            console.error('Ошибка загрузки истории сообщений:', error);
-            localStorage.removeItem('messageHistory');
-        }
-    }
-    
-    // Загружаем информацию о файлах
-    const savedFiles = localStorage.getItem('fileHistory');
-    if (savedFiles) {
-        try {
-            const filesData = JSON.parse(savedFiles);
-            filesData.forEach(fileData => {
-                if (fileData && fileData.id) {
-                    this.files.set(fileData.id, fileData);
-                }
-            });
-        } catch (error) {
-            console.error('Ошибка загрузки истории файлов:', error);
-            localStorage.removeItem('fileHistory');
-        }
-    }
-    
-    // Загружаем состояния пиров
-    const savedPeerStates = localStorage.getItem('peerStates');
-    if (savedPeerStates) {
-        try {
-            const states = JSON.parse(savedPeerStates);
-            states.forEach(state => {
-                if (state && state.peerId) {
-                    this.peerStates.set(state.peerId, state);
-                }
-            });
-        } catch (error) {
-            console.error('Ошибка загрузки состояний пиров:', error);
-            localStorage.removeItem('peerStates');
-        }
-    }
-    
-    // Загружаем время последней синхронизации
-    const savedLastSync = localStorage.getItem('lastSyncTime');
-    if (savedLastSync) {
-        try {
-            this.lastSyncTime = parseInt(savedLastSync);
-        } catch (error) {
-            console.error('Ошибка загрузки времени синхронизации:', error);
-            this.lastSyncTime = 0;
-        }
-    }
-};
-
-// Сохранение данных в LocalStorage
-P2PClient.prototype.saveToStorage = function() {
-    // Сохраняем только валидные данные пиров
-    const peersArray = [];
-    this.peers.forEach((peerData, id) => {
-        if (id && typeof id === 'string' && id.trim() !== '' && 
-            peerData && typeof peerData === 'object') {
-            peersArray.push(peerData);
-        }
-    });
-    localStorage.setItem('knownPeers', JSON.stringify(peersArray));
-    
-    localStorage.setItem('messageHistory', JSON.stringify(this.messages));
-    
-    const filesData = [];
-    this.files.forEach((fileData, id) => {
-        if (fileData && fileData.id) {
-            filesData.push(fileData);
-        }
-    });
-    localStorage.setItem('fileHistory', JSON.stringify(filesData));
-    
-    const statesArray = [];
-    this.peerStates.forEach((state, peerId) => {
-        if (state && peerId) {
-            statesArray.push(state);
-        }
-    });
-    localStorage.setItem('peerStates', JSON.stringify(statesArray));
-    
-    localStorage.setItem('lastSyncTime', this.lastSyncTime.toString());
-};
-
 // Сохранение предложения для пира
-P2PClient.prototype.savePeerOffer = function(peerId, offer) {
+P2PClient.prototype.savePeerOffer = async function(peerId, offer) {
     // Проверяем валидность peerId
     if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
         console.error('Некорректный ID пира для сохранения предложения:', peerId);
@@ -428,7 +311,13 @@ P2PClient.prototype.savePeerOffer = function(peerId, offer) {
     }
     
     this.peers.set(peerId, peerData);
-    this.saveToStorage();
+    
+    // Сохраняем в IndexedDB
+    try {
+        await this.db.savePeer(peerData);
+    } catch (error) {
+        console.error('Ошибка сохранения пира в IndexedDB:', error);
+    }
 };
 
 // Обработка запроса синхронизации
@@ -462,27 +351,27 @@ P2PClient.prototype.handleSyncRequest = function(request, peerId) {
 };
 
 // Обработка ответа синхронизации
-P2PClient.prototype.handleSyncResponse = function(response, peerId) {
+P2PClient.prototype.handleSyncResponse = async function(response, peerId) {
     console.log(`Получен ответ синхронизации от ${peerId}`);
     
     let addedMessages = 0;
     let addedFiles = 0;
     
     // Добавляем отсутствующие сообщения
-    response.messages.forEach(msg => {
+    for (const msg of response.messages) {
         if (!this.messages.find(m => m.id === msg.id)) {
             this.addMessageToHistory(msg);
             addedMessages++;
         }
-    });
+    }
     
     // Добавляем отсутствующие файлы
-    response.files.forEach(fileData => {
+    for (const fileData of response.files) {
         if (!this.files.has(fileData.id)) {
-            this.files.set(fileData.id, fileData);
+            await this.saveFileToStorage(fileData);
             addedFiles++;
         }
-    });
+    }
     
     // Обновляем время последней синхронизации
     this.lastSyncTime = Math.max(this.lastSyncTime, response.timestamp);
@@ -495,11 +384,18 @@ P2PClient.prototype.handleSyncResponse = function(response, peerId) {
 };
 
 // Добавление сообщения в историю с проверкой на дубликаты
-P2PClient.prototype.addMessageToHistory = function(message) {
+P2PClient.prototype.addMessageToHistory = async function(message) {
     // Проверяем, нет ли уже такого сообщения
     const existingMessage = this.messages.find(m => m.id === message.id);
     if (!existingMessage) {
         this.messages.push(message);
+        
+        // Сохраняем сообщение в IndexedDB
+        try {
+            await this.db.saveMessage(message);
+        } catch (error) {
+            console.error('Ошибка сохранения сообщения в IndexedDB:', error);
+        }
         
         // Обновляем время последней синхронизации
         this.lastSyncTime = Math.max(this.lastSyncTime, message.timestamp);
@@ -524,7 +420,7 @@ P2PClient.prototype.addMessageToHistory = function(message) {
 };
 
 // Удаление пира
-P2PClient.prototype.removePeer = function(peerId) {
+P2PClient.prototype.removePeer = async function(peerId) {
     this.peers.delete(peerId);
     
     if (this.connections.has(peerId)) {
@@ -538,6 +434,13 @@ P2PClient.prototype.removePeer = function(peerId) {
     
     this.connectedPeers.delete(peerId);
     
+    // Удаляем пира из IndexedDB
+    try {
+        await this.db.deletePeer(peerId);
+    } catch (error) {
+        console.error('Ошибка удаления пира из IndexedDB:', error);
+    }
+    
     this.updateUI();
     console.log(`Удален пир: ${peerId}`);
 };
@@ -547,9 +450,9 @@ P2PClient.prototype.clearChat = function() {
     this.showMessageModal(
         'Очистка чата', 
         'Вы уверены, что хотите очистить всю историю чата? Это действие нельзя отменить. Все подключенные пользователи также очистят свои чаты.',
-        () => {
+        async () => {
             // Очищаем локальные данные
-            this.clearChatData();
+            await this.clearChatData();
             
             // Рассылаем команду очистки чата всем пирам
             const clearCommand = {
@@ -569,7 +472,7 @@ P2PClient.prototype.clearChat = function() {
 };
 
 // Полная очистка всех данных (команда kill)
-P2PClient.prototype.killAllData = function() {
+P2PClient.prototype.killAllData = async function() {
     // Очищаем все локальные данные
     this.messages = [];
     this.files.clear();
@@ -580,22 +483,32 @@ P2PClient.prototype.killAllData = function() {
     this.peerStates.clear();
     this.lastSyncTime = 0;
     
-    // Очищаем LocalStorage
-    localStorage.removeItem('knownPeers');
-    localStorage.removeItem('messageHistory');
-    localStorage.removeItem('fileHistory');
-    localStorage.removeItem('peerStates');
-    localStorage.removeItem('lastSyncTime');
-    
-    // Генерируем новый ID пира
-    localStorage.removeItem('peerId');
-    this.localPeerId = this.generatePeerId();
+    // Очищаем IndexedDB
+    try {
+        await this.db.clearAllData();
+        
+        // Генерируем новый ID пира
+        const newPeerId = 'peer_' + Math.random().toString(36).substr(2, 9);
+        await this.db.setPeerId(newPeerId);
+        this.localPeerId = newPeerId;
+        
+    } catch (error) {
+        console.error('Ошибка очистки IndexedDB:', error);
+    }
     
     this.updateUI();
     console.log('Все данные очищены (команда kill)');
 };
 
 // Инициализация приложения после загрузки страницы
-document.addEventListener('DOMContentLoaded', () => {
-    window.p2pClient = new P2PClient();
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        // Сначала инициализируем IndexedDB
+        await window.indexedDBManager.init();
+        // Затем создаем P2P клиент
+        window.p2pClient = new P2PClient();
+    } catch (error) {
+        console.error('Ошибка инициализации приложения:', error);
+        alert('Не удалось инициализировать приложение. Пожалуйста, обновите страницу.');
+    }
 });
