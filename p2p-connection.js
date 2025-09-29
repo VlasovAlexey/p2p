@@ -11,47 +11,190 @@ P2PClient.prototype.setupConnectionHandlers = function(connection, peerId) {
     
     // Обработчик изменения состояния соединения
     connection.onconnectionstatechange = () => {
-        console.log(`Состояние соединения с ${peerId}: ${connection.connectionState}`);
+        const state = connection.connectionState;
+        console.log(`Состояние соединения с ${peerId}: ${state}`);
         
-        if (connection.connectionState === 'connected') {
-            this.connectedPeers.add(peerId);
-            this.isOnline = true;
-            this.reconnectAttempts.set(peerId, 0); // Сбрасываем счетчик попыток
-            this.updateUI();
-            
-            // Синхронизируем историю после подключения
-            this.syncWithPeer(peerId);
-        } else if (connection.connectionState === 'disconnected' || 
-                  connection.connectionState === 'failed') {
-            this.connectedPeers.delete(peerId);
-            if (this.connectedPeers.size === 0) {
-                this.isOnline = false;
-            }
-            this.updateUI();
-            
-            // Пытаемся переподключиться
-            if (!this.reconnectInProgress) {
-                setTimeout(() => {
-                    this.reconnectToPeer(peerId);
-                }, this.reconnectTimeout);
-            }
+        if (state === 'connected') {
+            this.handlePeerConnected(peerId, connection);
+        } else if (state === 'disconnected' || state === 'failed') {
+            this.handlePeerDisconnected(peerId);
+        } else if (state === 'closed') {
+            this.handlePeerClosed(peerId);
         }
     };
 
     // Обработчик ICE соединения
     connection.oniceconnectionstatechange = () => {
-        console.log(`ICE состояние соединения с ${peerId}: ${connection.iceConnectionState}`);
+        const iceState = connection.iceConnectionState;
+        console.log(`ICE состояние соединения с ${peerId}: ${iceState}`);
         
-        if (connection.iceConnectionState === 'failed') {
-            console.log(`ICE соединение с ${peerId} завершилось ошибкой, пытаемся восстановить...`);
-            // Пытаемся пересоздать предложение
-            if (!this.reconnectInProgress) {
-                setTimeout(() => {
-                    this.reconnectToPeer(peerId);
-                }, this.reconnectTimeout);
-            }
+        if (iceState === 'failed') {
+            console.log(`ICE соединение с ${peerId} завершилось ошибкой`);
+            this.handlePeerDisconnected(peerId);
         }
     };
+
+    // Обработчик состояния сигнального канала
+    connection.onsignalingstatechange = () => {
+        console.log(`Сигнальное состояние с ${peerId}: ${connection.signalingState}`);
+    };
+};
+
+// Обработка входящего предложения - улучшаем для работы с восстановлением
+P2PClient.prototype.handleOffer = async function(signalData) {
+    try {
+        const peerId = signalData.peerId;
+        
+        // Проверяем валидность ID пира
+        if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+            this.showMessageModal('Ошибка', 'Некорректный ID пира в предложении');
+            return;
+        }
+
+        // Если это переподключение существующего пира, закрываем старое соединение
+        if (this.connections.has(peerId)) {
+            const oldConnection = this.connections.get(peerId);
+            if (oldConnection.connectionState !== 'connected') {
+                console.log(`Закрываем старое соединение с ${peerId} для переподключения`);
+                oldConnection.close();
+                this.connections.delete(peerId);
+            } else {
+                console.log(`Пир ${peerId} уже подключен, игнорируем новое предложение`);
+                return;
+            }
+        }
+        
+        // Создаем соединение
+        const connection = new RTCPeerConnection(this.rtcConfig);
+        this.connections.set(peerId, connection);
+        
+        // Обновляем или добавляем пира в список
+        let peerData = this.peers.get(peerId);
+        if (!peerData) {
+            peerData = {
+                id: peerId,
+                lastSeen: Date.now(),
+                connectionCount: 1
+            };
+            this.peers.set(peerId, peerData);
+        } else {
+            peerData.lastSeen = Date.now();
+            peerData.connectionCount = (peerData.connectionCount || 0) + 1;
+        }
+
+        // Сохраняем обновленные данные пира
+        await this.db.savePeer(peerData);
+        
+        // Обработчик входящего канала данных
+        connection.ondatachannel = (event) => {
+            const incomingChannel = event.channel;
+            this.setupDataChannel(incomingChannel, peerId);
+        };
+        
+        // Обработчики событий соединения
+        this.setupConnectionHandlers(connection, peerId);
+        
+        // Устанавливаем удаленное предложение
+        await connection.setRemoteDescription(signalData.offer);
+        
+        // Создаем ответ
+        const answer = await connection.createAnswer();
+        await connection.setLocalDescription(answer);
+        
+        // Сохраняем ответ для будущих переподключений
+        this.savePeerOffer(peerId, answer);
+        
+        // Формируем сигнальные данные для ответа
+        const answerSignalData = {
+            type: 'answer',
+            peerId: this.localPeerId,
+            targetPeerId: peerId,
+            answer: answer
+        };
+        
+        // Кодируем в Base64
+        const jsonStr = JSON.stringify(answerSignalData);
+        const base64Data = this.encodeBase64(jsonStr);
+        
+        // Показываем ответ для копирования
+        document.getElementById('localOfferData').value = base64Data;
+        document.getElementById('copyOfferBtn').disabled = false;
+        
+        console.log('Ответ создан, отправьте его инициатору подключения');
+        this.showMessageModal('Успех', 'Ответ создан. Скопируйте его и отправьте обратно инициатору подключения.');
+        
+        this.updateUI();
+        
+    } catch (error) {
+        console.error('Ошибка обработки предложения:', error);
+        this.showMessageModal('Ошибка', 'Ошибка обработки предложения: ' + error.message);
+    }
+};
+
+// Обработка входящего ответа - улучшаем для работы с восстановлением
+P2PClient.prototype.handleAnswer = async function(signalData) {
+    try {
+        const peerId = signalData.peerId;
+        
+        // Проверяем валидность ID пира
+        if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+            this.showMessageModal('Ошибка', 'Некорректный ID пира в ответе');
+            return;
+        }
+
+        // Ищем ожидающее предложение или существующее соединение
+        let connection;
+        if (this.pendingOffer && this.pendingOffer.peerId) {
+            connection = this.pendingOffer.connection;
+        } else {
+            connection = this.connections.get(peerId);
+        }
+
+        if (!connection) {
+            this.showMessageModal('Ошибка', 'Нет активного соединения для этого ответа');
+            return;
+        }
+        
+        // Обновляем или добавляем пира в список
+        let peerData = this.peers.get(peerId);
+        if (!peerData) {
+            peerData = {
+                id: peerId,
+                lastSeen: Date.now(),
+                connectionCount: 1
+            };
+        } else {
+            peerData.lastSeen = Date.now();
+            peerData.connectionCount = (peerData.connectionCount || 0) + 1;
+        }
+        
+        this.peers.set(peerId, peerData);
+        await this.db.savePeer(peerData);
+        
+        // Обновляем ID пира на реальный если это был временный ID
+        if (this.pendingOffer && this.pendingOffer.peerId !== peerId) {
+            this.connections.delete(this.pendingOffer.peerId);
+            this.connections.set(peerId, connection);
+        }
+        
+        // Устанавливаем удаленный ответ
+        await connection.setRemoteDescription(signalData.answer);
+        
+        // Сохраняем предложение для будущих переподключений
+        if (connection.localDescription) {
+            this.savePeerOffer(peerId, connection.localDescription);
+        }
+        
+        this.pendingOffer = null;
+        
+        console.log(`Ответ установлен, соединение с ${peerId} должно установиться`);
+        
+        this.updateUI();
+        
+    } catch (error) {
+        console.error('Ошибка обработки ответа:', error);
+        this.showMessageModal('Ошибка', 'Ошибка обработки ответа: ' + error.message);
+    }
 };
 
 // Создание предложения для подключения

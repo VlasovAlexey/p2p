@@ -1,4 +1,4 @@
-﻿﻿// Основной класс P2P клиента - ядро системы
+﻿﻿﻿// Основной класс P2P клиента - ядро системы
 class P2PClient {
     constructor() {
         this.db = window.indexedDBManager;
@@ -35,7 +35,7 @@ class P2PClient {
         this.peerStates = new Map(); // Состояния пиров для синхронизации
         this.reconnectAttempts = new Map(); // Количество попыток переподключения
         this.maxReconnectAttempts = 5;
-        this.reconnectTimeout = 500; // 500 мс между попытками
+        this.reconnectTimeout = 2000; // Увеличиваем таймаут до 2 секунд
         
         // Для модальных окон
         this.reconnectModal = null;
@@ -55,6 +55,210 @@ class P2PClient {
         
         // Инициализация будет асинхронной
         this.init();
+    }
+    
+    // Асинхронная инициализация приложения
+    async init() {
+        try {
+            await this.db.init();
+            await this.loadFromStorage();
+            this.setupEventListeners();
+            this.setupModals();
+            this.updateUI();
+            this.startPeerMonitoring();
+            
+            // Автоматическое восстановление соединений при старте
+            setTimeout(() => {
+                this.autoReconnectOnStart();
+            }, 1000); // Задержка для полной инициализации UI
+            
+            console.log(`P2P клиент инициализирован с ID: ${this.localPeerId}`);
+        } catch (error) {
+            console.error('Ошибка инициализации P2P клиента:', error);
+            this.showMessageModal('Ошибка', 'Не удалось инициализировать приложение: ' + error.message);
+        }
+    }
+    
+    // Генерация уникального ID для пира
+    async generatePeerId() {
+        let savedId = await this.db.getPeerId();
+        if (savedId) return savedId;
+        
+        const newId = 'peer_' + Math.random().toString(36).substr(2, 9);
+        await this.db.setPeerId(newId);
+        return newId;
+    }
+    
+    // Загрузка данных из IndexedDB
+    async loadFromStorage() {
+        try {
+            console.log('Загрузка данных из IndexedDB...');
+            
+            // Загружаем ID пира
+            this.localPeerId = await this.generatePeerId();
+            
+            // Загружаем сообщения
+            const savedMessages = await this.db.getAllMessages();
+            this.messages = savedMessages || [];
+            console.log(`Загружено сообщений: ${this.messages.length}`);
+            
+            // Загружаем файлы в кэш
+            const savedFiles = await this.db.getAllFiles();
+            if (savedFiles) {
+                savedFiles.forEach(fileData => {
+                    if (fileData && fileData.id) {
+                        this.files.set(fileData.id, fileData);
+                    }
+                });
+            }
+            console.log(`Загружено файлов: ${this.files.size}`);
+            
+            // Загружаем пиров
+            const savedPeers = await this.db.getAllPeers();
+            if (savedPeers) {
+                savedPeers.forEach(peerData => {
+                    if (peerData && peerData.id && typeof peerData.id === 'string' && peerData.id.trim() !== '') {
+                        this.peers.set(peerData.id, peerData);
+                    }
+                });
+            }
+            console.log(`Загружено пиров: ${this.peers.size}`);
+            
+            // Загружаем состояния пиров
+            const savedPeerStates = await this.db.getAllPeerStates();
+            if (savedPeerStates) {
+                Object.keys(savedPeerStates).forEach(peerId => {
+                    if (peerId && savedPeerStates[peerId]) {
+                        this.peerStates.set(peerId, savedPeerStates[peerId]);
+                    }
+                });
+            }
+            
+            // Загружаем время последней синхронизации
+            this.lastSyncTime = await this.db.getLastSyncTime();
+            
+            console.log('Данные из IndexedDB успешно загружены');
+            
+        } catch (error) {
+            console.error('Ошибка загрузки данных из IndexedDB:', error);
+            // В случае ошибки инициализируем пустые данные
+            this.messages = [];
+            this.files.clear();
+            this.peers.clear();
+            this.peerStates.clear();
+            this.lastSyncTime = 0;
+        }
+    }
+
+    // Обработка входящих сообщений - дополняем обработку ping/pong
+    handleIncomingMessage(data, peerId) {
+        try {
+            // Проверяем, является ли сообщение строкой (JSON) или объектом
+            let message;
+            if (typeof data === 'string') {
+                message = JSON.parse(data);
+            } else {
+                // Если это не строка, возможно это бинарные данные
+                console.warn('Получены бинарные данные, которые не могут быть обработаны');
+                return;
+            }
+            
+            // Обработка служебных сообщений
+            if (message.type === 'ping') {
+                this.handlePingMessage(message, peerId);
+                return;
+            } else if (message.type === 'pong') {
+                this.handlePongMessage(message, peerId);
+                return;
+            }
+            
+            if (message.type === 'text') {
+                // Проверяем команду kill
+                if (message.content === 'kill') {
+                    console.log(`Получена команда kill от ${peerId}`);
+                    this.killAllData();
+                    return;
+                }
+                
+                this.addMessageToHistory({
+                    id: this.generateMessageId(),
+                    type: 'text',
+                    content: message.content,
+                    sender: peerId,
+                    timestamp: message.timestamp || Date.now()
+                });
+                
+                console.log(`Получено сообщение от ${peerId}: ${message.content}`);
+                
+            } else if (message.type === 'file') {
+                const fileData = message.fileData;
+                // Сохраняем файл в IndexedDB
+                this.saveFileToStorage(fileData);
+                
+                this.addMessageToHistory({
+                    id: this.generateMessageId(),
+                    type: 'file',
+                    fileId: fileData.id,
+                    sender: peerId,
+                    timestamp: message.timestamp || Date.now()
+                });
+                
+                console.log(`Получен файл от ${peerId}: ${fileData.name}`);
+                
+            } else if (message.type === 'sync_request') {
+                // Обработка запроса синхронизации
+                this.handleSyncRequest(message, peerId);
+            } else if (message.type === 'sync_response') {
+                // Обработка ответа синхронизации
+                this.handleSyncResponse(message, peerId);
+            } else if (message.type === 'kill_command') {
+                // Обработка команды kill от другого пира
+                console.log(`Получена команда kill от ${peerId}`);
+                this.killAllData();
+            } else if (message.type === 'clear_chat_command') {
+                // Обработка команды очистки чата от другого пира
+                console.log(`Получена команда очистки чата от ${peerId}`);
+                this.clearChatData();
+            } else if (message.type === 'file_transfer_start') {
+                // Начало передачи файла
+                this.handleFileTransferStart(message, peerId);
+            } else if (message.type === 'file_transfer_chunk') {
+                // Получение чанка файла
+                this.handleFileTransferChunk(message, peerId);
+            } else if (message.type === 'file_transfer_complete') {
+                // Завершение передачи файла
+                this.handleFileTransferComplete(message, peerId);
+            } else if (message.type === 'file_transfer_error') {
+                // Ошибка передачи файла
+                this.handleFileTransferError(message, peerId);
+            }
+            
+        } catch (error) {
+            console.error('Ошибка обработки входящего сообщения:', error);
+        }
+    }
+
+    // Запуск мониторинга пиров - добавляем проверку здоровья соединений
+    startPeerMonitoring() {
+        // Проверка состояния пиров каждые 1000 мс
+        setInterval(() => {
+            this.checkPeersStatus();
+        }, 1000);
+        
+        // Автоматическое обновление SDP каждые 2000 мс для поддержания соединения
+        setInterval(() => {
+            this.refreshConnections();
+        }, 2000);
+
+        // Проверка состояния передачи файлов
+        setInterval(() => {
+            this.monitorFileTransfers();
+        }, 5000);
+
+        // Проверка здоровья соединений каждые 30 секунд
+        setInterval(() => {
+            this.checkConnectionHealth();
+        }, 30000);
     }
     
     // Асинхронная инициализация приложения
