@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+﻿﻿<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
@@ -30,6 +30,15 @@
             <h3>Создание предложения</h3>
             <p>Пожалуйста, подождите, создается предложение для подключения...</p>
             <div class="spinner"></div>
+        </div>
+    </div>
+
+    <!-- Модальное окно сообщений -->
+    <div id="messageModal" class="modal">
+        <div class="modal-content">
+            <h3 id="messageModalTitle">Сообщение</h3>
+            <p id="messageModalText"></p>
+            <button id="messageModalOk" class="ok-btn">OK</button>
         </div>
     </div>
 
@@ -95,6 +104,10 @@
         </footer>
     </div>
 
-    <script src="p2p-client.js"></script>
+    <!-- Загрузка JavaScript файлов в правильной последовательности -->
+    <script src="p2p-core.js"></script>
+    <script src="p2p-connection.js"></script>
+    <script src="p2p-reconnect.js"></script>
+    <script src="p2p-ui-storage.js"></script>
 </body>
 </html>
