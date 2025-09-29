@@ -29,13 +29,15 @@ class P2PClient {
         this.lastSyncTime = 0;
         this.peerStates = new Map(); // Состояния пиров для синхронизации
         this.reconnectAttempts = new Map(); // Количество попыток переподключения
-        this.maxReconnectAttempts = 3;
-        this.reconnectTimeout = 5000; // 5 секунд между попытками
+        this.maxReconnectAttempts = 5;
+        this.reconnectTimeout = 500; // 500 мс между попытками
         
-        // Для модального окна восстановления
+        // Для модальных окон
         this.reconnectModal = null;
+        this.creatingOfferModal = null;
         this.reconnectInProgress = false;
         this.reconnectStartTime = 0;
+        this.offerCreationInProgress = false;
         
         this.init();
     }
@@ -44,7 +46,7 @@ class P2PClient {
     init() {
         this.loadFromStorage();
         this.setupEventListeners();
-        this.setupModal();
+        this.setupModals();
         this.updateUI();
         this.startPeerMonitoring();
         
@@ -54,9 +56,11 @@ class P2PClient {
         console.log(`P2P клиент инициализирован с ID: ${this.localPeerId}`);
     }
     
-    // Настройка модального окна
-    setupModal() {
+    // Настройка модальных окон
+    setupModals() {
         this.reconnectModal = document.getElementById('reconnectModal');
+        this.creatingOfferModal = document.getElementById('creatingOfferModal');
+        
         document.getElementById('cancelReconnect').addEventListener('click', () => {
             this.cancelReconnect();
         });
@@ -74,6 +78,22 @@ class P2PClient {
     hideReconnectModal() {
         if (this.reconnectModal) {
             this.reconnectModal.style.display = 'none';
+        }
+    }
+    
+    // Показать модальное окно создания предложения
+    showCreatingOfferModal() {
+        if (this.creatingOfferModal) {
+            this.creatingOfferModal.style.display = 'block';
+            this.offerCreationInProgress = true;
+        }
+    }
+    
+    // Скрыть модальное окно создания предложения
+    hideCreatingOfferModal() {
+        if (this.creatingOfferModal) {
+            this.creatingOfferModal.style.display = 'none';
+            this.offerCreationInProgress = false;
         }
     }
     
@@ -105,12 +125,12 @@ class P2PClient {
         this.reconnectInProgress = true;
         this.reconnectStartTime = Date.now();
         
-        // Показываем модальное окно через 2 секунды, если восстановление еще не завершено
+        // Показываем модальное окно через 1 секунду, если восстановление еще не завершено
         setTimeout(() => {
             if (this.reconnectInProgress && this.connectedPeers.size < this.peers.size) {
                 this.showReconnectModal();
             }
-        }, 2000);
+        }, 1000);
         
         // Пытаемся подключиться ко всем известным пирам
         for (const peerId of knownPeers) {
@@ -380,21 +400,19 @@ class P2PClient {
     
     // Запуск мониторинга пиров
     startPeerMonitoring() {
-        // Проверка состояния пиров каждые 10 секунд
+        // Проверка состояния пиров каждые 1000 мс
         setInterval(() => {
             this.checkPeersStatus();
-        }, 10000);
+        }, 1000);
         
-        // Автоматическое обновление SDP каждые 30 секунд для поддержания соединения
+        // Автоматическое обновление SDP каждые 2000 мс для поддержания соединения
         setInterval(() => {
             this.refreshConnections();
-        }, 30000);
+        }, 2000);
     }
     
     // Проверка состояния пиров
     checkPeersStatus() {
-        console.log('Проверка состояния пиров...');
-        
         this.dataChannels.forEach((channel, peerId) => {
             const isConnected = channel.readyState === 'open';
             const wasConnected = this.connectedPeers.has(peerId);
@@ -431,8 +449,6 @@ class P2PClient {
     refreshConnections() {
         if (this.connectedPeers.size === 0) return;
         
-        console.log('Обновление соединений...');
-        
         this.connectedPeers.forEach(peerId => {
             const connection = this.connections.get(peerId);
             if (connection && connection.connectionState === 'connected') {
@@ -455,7 +471,6 @@ class P2PClient {
             // Сохраняем обновленное предложение
             this.savePeerOffer(peerId, offer);
             
-            console.log(`Обновлены ICE кандидаты для пира ${peerId}`);
         } catch (error) {
             console.error(`Ошибка обновления ICE кандидатов для ${peerId}:`, error);
         }
@@ -632,6 +647,9 @@ class P2PClient {
     
     // Создание предложения для подключения
     async createOffer() {
+        // Показываем модальное окно создания предложения
+        this.showCreatingOfferModal();
+        
         try {
             // Создаем временный ID для нового пира
             const newPeerId = 'peer_' + Math.random().toString(36).substr(2, 9);
@@ -704,6 +722,7 @@ class P2PClient {
         } catch (error) {
             console.error('Ошибка создания предложения:', error);
             alert('Ошибка создания предложения: ' + error.message);
+            this.hideCreatingOfferModal();
         }
     }
     
@@ -748,6 +767,9 @@ class P2PClient {
         
         document.getElementById('localOfferData').value = base64Data;
         document.getElementById('copyOfferBtn').disabled = false;
+        
+        // Скрываем модальное окно создания предложения
+        this.hideCreatingOfferModal();
         
         console.log('Предложение готово для копирования (в формате Base64)');
     }
