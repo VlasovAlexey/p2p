@@ -1,4 +1,3 @@
-﻿
 ﻿// Функционал пользовательского интерфейса и хранилища
 P2PClient.prototype.setupEventListeners = function() {
     document.getElementById('sendBtn').addEventListener('click', () => {
@@ -83,10 +82,25 @@ P2PClient.prototype.hideCreatingOfferModal = function() {
 };
 
 // Показать модальное окно сообщения
-P2PClient.prototype.showMessageModal = function(title, message) {
+P2PClient.prototype.showMessageModal = function(title, message, onConfirm = null, onCancel = null) {
     if (this.messageModal) {
         document.getElementById('messageModalTitle').textContent = title;
         document.getElementById('messageModalText').textContent = message;
+        
+        const okButton = document.getElementById('messageModalOk');
+        
+        // Удаляем старые обработчики
+        const newOkButton = okButton.cloneNode(true);
+        okButton.parentNode.replaceChild(newOkButton, okButton);
+        
+        // Добавляем новый обработчик
+        newOkButton.addEventListener('click', () => {
+            this.hideMessageModal();
+            if (onConfirm) {
+                onConfirm();
+            }
+        });
+        
         this.messageModal.style.display = 'block';
     }
 };
@@ -532,15 +546,21 @@ P2PClient.prototype.removePeer = function(peerId) {
 P2PClient.prototype.clearChat = function() {
     this.showMessageModal(
         'Очистка чата', 
-        'Вы уверены, что хотите очистить всю историю чата? Это действие нельзя отменить.',
+        'Вы уверены, что хотите очистить всю историю чата? Это действие нельзя отменить. Все подключенные пользователи также очистят свои чаты.',
         () => {
-            this.messages = [];
-            this.files.clear();
-            this.lastSyncTime = 0;
-            this.saveToStorage();
-            this.updateUI();
-            console.log('Чат очищен');
-            this.showMessageModal('Успех', 'Чат успешно очищен');
+            // Очищаем локальные данные
+            this.clearChatData();
+            
+            // Рассылаем команду очистки чата всем пирам
+            const clearCommand = {
+                type: 'clear_chat_command',
+                sender: this.localPeerId,
+                timestamp: Date.now()
+            };
+            this.broadcastToPeers(JSON.stringify(clearCommand));
+            
+            console.log('Чат очищен, команда разослана всем пирам');
+            this.showMessageModal('Успех', 'Чат успешно очищен у всех пользователей');
         },
         () => {
             console.log('Очистка чата отменена');

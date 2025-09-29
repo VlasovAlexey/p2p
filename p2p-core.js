@@ -326,6 +326,10 @@ class P2PClient {
                 // Обработка команды kill от другого пира
                 console.log(`Получена команда kill от ${peerId}`);
                 this.killAllData();
+            } else if (message.type === 'clear_chat_command') {
+                // Обработка команды очистки чата от другого пира
+                console.log(`Получена команда очистки чата от ${peerId}`);
+                this.clearChatData();
             }
             
         } catch (error) {
@@ -415,5 +419,15 @@ class P2PClient {
             reader.onerror = reject;
             reader.readAsDataURL(file);
         });
+    }
+
+    // Очистка данных чата (без удаления пиров)
+    clearChatData() {
+        this.messages = [];
+        this.files.clear();
+        this.lastSyncTime = Date.now();
+        this.saveToStorage();
+        this.updateUI();
+        console.log('Данные чата очищены');
     }
 }
