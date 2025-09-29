@@ -117,7 +117,11 @@ class P2PClient {
     
     // Автоматическое восстановление соединений при старте
     async autoReconnectOnStart() {
-        const knownPeers = Array.from(this.peers.keys());
+        // Фильтруем только валидные peerId (не undefined и не пустые строки)
+        const knownPeers = Array.from(this.peers.keys()).filter(peerId => 
+            peerId && typeof peerId === 'string' && peerId.trim() !== ''
+        );
+        
         if (knownPeers.length === 0) return;
         
         console.log(`Попытка восстановления соединений с ${knownPeers.length} пирами...`);
@@ -149,6 +153,12 @@ class P2PClient {
     
     // Восстановление соединения с конкретным пиром
     async reconnectToPeer(peerId) {
+        // Проверяем валидность peerId
+        if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+            console.error('Некорректный ID пира:', peerId);
+            return;
+        }
+        
         const peerData = this.peers.get(peerId);
         if (!peerData || this.connectedPeers.has(peerId)) return;
         
@@ -292,46 +302,97 @@ class P2PClient {
     
     // Загрузка данных из LocalStorage
     loadFromStorage() {
+        // Очищаем существующие данные перед загрузкой
+        this.peers.clear();
+        this.messages = [];
+        this.files.clear();
+        this.peerStates.clear();
+        
+        // Загружаем список известных пиров с проверкой на валидность
         const savedPeers = localStorage.getItem('knownPeers');
         if (savedPeers) {
-            const peersArray = JSON.parse(savedPeers);
-            peersArray.forEach(peerData => {
-                this.peers.set(peerData.id, peerData);
-            });
+            try {
+                const peersArray = JSON.parse(savedPeers);
+                peersArray.forEach(peerData => {
+                    // Проверяем, что данные пира валидны
+                    if (peerData && typeof peerData === 'object' && peerData.id && 
+                        typeof peerData.id === 'string' && peerData.id.trim() !== '') {
+                        this.peers.set(peerData.id, peerData);
+                    } else {
+                        console.warn('Обнаружены некорректные данные пира:', peerData);
+                    }
+                });
+            } catch (error) {
+                console.error('Ошибка загрузки списка пиров:', error);
+                // В случае ошибки очищаем некорректные данные
+                localStorage.removeItem('knownPeers');
+            }
         }
         
+        // Загружаем историю сообщений
         const savedMessages = localStorage.getItem('messageHistory');
         if (savedMessages) {
-            this.messages = JSON.parse(savedMessages);
+            try {
+                this.messages = JSON.parse(savedMessages);
+            } catch (error) {
+                console.error('Ошибка загрузки истории сообщений:', error);
+                localStorage.removeItem('messageHistory');
+            }
         }
         
+        // Загружаем информацию о файлах
         const savedFiles = localStorage.getItem('fileHistory');
         if (savedFiles) {
-            const filesData = JSON.parse(savedFiles);
-            filesData.forEach(fileData => {
-                this.files.set(fileData.id, fileData);
-            });
+            try {
+                const filesData = JSON.parse(savedFiles);
+                filesData.forEach(fileData => {
+                    if (fileData && fileData.id) {
+                        this.files.set(fileData.id, fileData);
+                    }
+                });
+            } catch (error) {
+                console.error('Ошибка загрузки истории файлов:', error);
+                localStorage.removeItem('fileHistory');
+            }
         }
         
+        // Загружаем состояния пиров
         const savedPeerStates = localStorage.getItem('peerStates');
         if (savedPeerStates) {
-            const states = JSON.parse(savedPeerStates);
-            states.forEach(state => {
-                this.peerStates.set(state.peerId, state);
-            });
+            try {
+                const states = JSON.parse(savedPeerStates);
+                states.forEach(state => {
+                    if (state && state.peerId) {
+                        this.peerStates.set(state.peerId, state);
+                    }
+                });
+            } catch (error) {
+                console.error('Ошибка загрузки состояний пиров:', error);
+                localStorage.removeItem('peerStates');
+            }
         }
         
+        // Загружаем время последней синхронизации
         const savedLastSync = localStorage.getItem('lastSyncTime');
         if (savedLastSync) {
-            this.lastSyncTime = parseInt(savedLastSync);
+            try {
+                this.lastSyncTime = parseInt(savedLastSync);
+            } catch (error) {
+                console.error('Ошибка загрузки времени синхронизации:', error);
+                this.lastSyncTime = 0;
+            }
         }
     }
     
     // Сохранение данных в LocalStorage
     saveToStorage() {
+        // Сохраняем только валидные данные пиров
         const peersArray = [];
         this.peers.forEach((peerData, id) => {
-            peersArray.push(peerData);
+            if (id && typeof id === 'string' && id.trim() !== '' && 
+                peerData && typeof peerData === 'object') {
+                peersArray.push(peerData);
+            }
         });
         localStorage.setItem('knownPeers', JSON.stringify(peersArray));
         
@@ -339,13 +400,17 @@ class P2PClient {
         
         const filesData = [];
         this.files.forEach((fileData, id) => {
-            filesData.push(fileData);
+            if (fileData && fileData.id) {
+                filesData.push(fileData);
+            }
         });
         localStorage.setItem('fileHistory', JSON.stringify(filesData));
         
         const statesArray = [];
         this.peerStates.forEach((state, peerId) => {
-            statesArray.push(state);
+            if (state && peerId) {
+                statesArray.push(state);
+            }
         });
         localStorage.setItem('peerStates', JSON.stringify(statesArray));
         
@@ -354,9 +419,23 @@ class P2PClient {
     
     // Сохранение предложения для пира
     savePeerOffer(peerId, offer) {
-        const peerData = this.peers.get(peerId) || { id: peerId };
+        // Проверяем валидность peerId
+        if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+            console.error('Некорректный ID пира для сохранения предложения:', peerId);
+            return;
+        }
+        
+        let peerData = this.peers.get(peerId);
+        if (!peerData || typeof peerData !== 'object') {
+            peerData = { id: peerId };
+        }
+        
         peerData.lastOffer = offer;
         peerData.lastSeen = Date.now();
+        if (!peerData.connectionCount) {
+            peerData.connectionCount = 1;
+        }
+        
         this.peers.set(peerId, peerData);
         this.saveToStorage();
     }
@@ -414,6 +493,11 @@ class P2PClient {
     // Проверка состояния пиров
     checkPeersStatus() {
         this.dataChannels.forEach((channel, peerId) => {
+            // Пропускаем некорректные peerId
+            if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+                return;
+            }
+            
             const isConnected = channel.readyState === 'open';
             const wasConnected = this.connectedPeers.has(peerId);
             
@@ -450,6 +534,11 @@ class P2PClient {
         if (this.connectedPeers.size === 0) return;
         
         this.connectedPeers.forEach(peerId => {
+            // Пропускаем некорректные peerId
+            if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+                return;
+            }
+            
             const connection = this.connections.get(peerId);
             if (connection && connection.connectionState === 'connected') {
                 // Для активных соединений можно обновить ICE кандидатов
@@ -478,6 +567,11 @@ class P2PClient {
     
     // Синхронизация с пиром
     syncWithPeer(peerId) {
+        // Пропускаем некорректные peerId
+        if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+            return;
+        }
+        
         // Отправляем запрос на синхронизацию
         const syncRequest = {
             type: 'sync_request',
@@ -556,6 +650,11 @@ class P2PClient {
         peerList.innerHTML = '';
         
         this.peers.forEach((peerData, peerId) => {
+            // Пропускаем некорректные peerId
+            if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+                return;
+            }
+            
             const isConnected = this.connectedPeers.has(peerId);
             
             const peerItem = document.createElement('div');
@@ -728,8 +827,12 @@ class P2PClient {
     
     // Финализация подключения к пиру
     finalizePeerConnection(temporaryPeerId) {
-        // В реальном приложении здесь должен быть механизм определения реального ID пира
-        // Для демонстрации оставляем временный ID
+        // Проверяем валидность ID пира
+        if (!temporaryPeerId || typeof temporaryPeerId !== 'string' || temporaryPeerId.trim() === '') {
+            console.error('Некорректный ID пира для финализации:', temporaryPeerId);
+            return;
+        }
+        
         console.log(`Подключение к пиру ${temporaryPeerId} установлено`);
         
         // Сохраняем пира
@@ -824,6 +927,12 @@ class P2PClient {
     async handleOffer(signalData) {
         try {
             const peerId = signalData.peerId;
+            
+            // Проверяем валидность ID пира
+            if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+                alert('Некорректный ID пира в предложении');
+                return;
+            }
             
             if (this.peers.has(peerId)) {
                 alert('Этот пир уже подключен');
@@ -934,6 +1043,13 @@ class P2PClient {
             }
             
             const peerId = signalData.peerId;
+            
+            // Проверяем валидность ID пира
+            if (!peerId || typeof peerId !== 'string' || peerId.trim() === '') {
+                alert('Некорректный ID пира в ответе');
+                return;
+            }
+            
             const connection = this.pendingOffer.connection;
             
             // Добавляем пира в список
