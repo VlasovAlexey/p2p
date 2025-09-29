@@ -1,0 +1,267 @@
+﻿* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+}
+
+body {
+    background-color: #f5f5f5;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+header {
+    background-color: #4a76a8;
+    color: white;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    font-size: 24px;
+    font-weight: bold;
+}
+
+.status {
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+}
+
+.status-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #2ecc71;
+    margin-right: 8px;
+}
+
+.status.offline .status-indicator {
+    background-color: #e74c3c;
+}
+
+main {
+    display: flex;
+    height: 70vh;
+}
+
+.sidebar {
+    width: 30%;
+    border-right: 1px solid #eee;
+    display: flex;
+    flex-direction: column;
+}
+
+.peers-section {
+    padding: 15px;
+    border-bottom: 1px solid #eee;
+}
+
+h2, h3 {
+    font-size: 16px;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+.peer-list {
+    max-height: 150px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+}
+
+.peer-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 5px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.peer-info {
+    display: flex;
+    align-items: center;
+}
+
+.peer-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.peer-online {
+    background-color: #2ecc71;
+}
+
+.peer-offline {
+    background-color: #e74c3c;
+}
+
+.peer-actions button {
+    background: none;
+    border: none;
+    color: #e74c3c;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.signal-section {
+    margin-top: 15px;
+}
+
+.signal-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.signal-controls button {
+    padding: 8px 12px;
+    background-color: #4a76a8;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.signal-controls button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+.signal-data {
+    width: 100%;
+    height: 80px;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: vertical;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.signal-input {
+    margin-top: 10px;
+}
+
+.chat-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-messages {
+    flex: 1;
+    padding: 15px;
+    overflow-y: auto;
+    border-bottom: 1px solid #eee;
+}
+
+.message {
+    margin-bottom: 15px;
+    padding: 10px;
+    border-radius: 8px;
+    max-width: 80%;
+}
+
+.message.own {
+    background-color: #e3f2fd;
+    margin-left: auto;
+}
+
+.message.other {
+    background-color: #f5f5f5;
+}
+
+.message-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.message-content {
+    word-break: break-word;
+}
+
+.file-message {
+    padding: 8px;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-top: 5px;
+}
+
+.file-message a {
+    color: #4a76a8;
+    text-decoration: none;
+}
+
+.file-message a:hover {
+    text-decoration: underline;
+}
+
+.chat-input {
+    display: flex;
+    padding: 15px;
+    gap: 10px;
+}
+
+.message-input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: none;
+    height: 60px;
+}
+
+.file-input-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    background-color: #f0f0f0;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.file-input {
+    display: none;
+}
+
+.send-button {
+    padding: 10px 20px;
+    background-color: #4a76a8;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+footer {
+    padding: 15px;
+    background-color: #f9f9f9;
+    border-top: 1px solid #eee;
+    font-size: 12px;
+    color: #666;
+}
+
+.network-info {
+    display: flex;
+    justify-content: space-between;
+}
