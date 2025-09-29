@@ -16,7 +16,11 @@ class P2PClient {
                 { urls: 'stun:stun3.l.google.com:19302' },
                 { urls: 'stun:stun4.l.google.com:19302' }
             ],
-            iceCandidatePoolSize: 10
+            iceCandidatePoolSize: 10,
+            // Увеличиваем таймауты для стабильности
+            iceTransportPolicy: 'all',
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
         };
         
         // Состояние приложения
@@ -42,6 +46,11 @@ class P2PClient {
         
         // Для мигания индикатора
         this.blinkInterval = null;
+
+        // Для управления передачей файлов
+        this.fileTransfers = new Map(); // transferId -> transferData
+        this.chunkSize = 16 * 1024; // 16KB chunks для стабильности
+        this.maxFileSize = 100 * 1024 * 1024; // 100MB максимальный размер файла
         
         this.init();
     }
@@ -109,6 +118,21 @@ class P2PClient {
                 }
             }
         };
+
+        // Обработчик ICE соединения
+        connection.oniceconnectionstatechange = () => {
+            console.log(`ICE состояние соединения с ${peerId}: ${connection.iceConnectionState}`);
+            
+            if (connection.iceConnectionState === 'failed') {
+                console.log(`ICE соединение с ${peerId} завершилось ошибкой, пытаемся восстановить...`);
+                // Пытаемся пересоздать предложение
+                if (!this.reconnectInProgress) {
+                    setTimeout(() => {
+                        this.reconnectToPeer(peerId);
+                    }, this.reconnectTimeout);
+                }
+            }
+        };
     }
     
     // Настройка канала данных
@@ -137,7 +161,18 @@ class P2PClient {
                 }, this.reconnectTimeout);
             }
         };
-        
+
+        channel.onerror = (error) => {
+            console.error(`Ошибка канала данных с пиром ${peerId}:`, error);
+            // Не закрываем соединение при ошибке, пытаемся восстановить
+        };
+
+        // Мониторинг состояния буфера
+        channel.onbufferedamountlow = () => {
+            console.log(`Буфер канала с ${peerId} опустился ниже порога`);
+            // Можно возобновить отправку данных если была приостановлена
+        };
+
         channel.onmessage = (event) => {
             this.handleIncomingMessage(event.data, peerId);
         };
@@ -156,6 +191,11 @@ class P2PClient {
         setInterval(() => {
             this.refreshConnections();
         }, 2000);
+
+        // Проверка состояния передачи файлов
+        setInterval(() => {
+            this.monitorFileTransfers();
+        }, 5000);
     }
     
     // Проверка состояния пиров
@@ -264,25 +304,75 @@ class P2PClient {
     sendToPeer(peerId, message) {
         const channel = this.dataChannels.get(peerId);
         if (channel && channel.readyState === 'open') {
-            channel.send(message);
-            return true;
+            try {
+                // Проверяем размер сообщения
+                if (message.length > 256 * 1024) { // 256KB лимит
+                    console.warn(`Сообщение слишком большое для отправки одним пакетом: ${message.length} байт`);
+                    return false;
+                }
+
+                // Проверяем буфер перед отправкой
+                if (channel.bufferedAmount > 512 * 1024) { // 512KB буфер
+                    console.warn(`Буфер канала с ${peerId} переполнен: ${channel.bufferedAmount} байт`);
+                    return false;
+                }
+
+                channel.send(message);
+                return true;
+            } catch (error) {
+                console.error(`Ошибка отправки сообщения пиру ${peerId}:`, error);
+                return false;
+            }
         }
         return false;
     }
     
     // Рассылка сообщения всем подключенным пирам
     broadcastToPeers(message) {
+        let successCount = 0;
         this.dataChannels.forEach((channel, peerId) => {
             if (channel.readyState === 'open') {
-                channel.send(message);
+                if (this.sendToPeer(peerId, message)) {
+                    successCount++;
+                }
             }
+        });
+        return successCount > 0;
+    }
+
+    // Безопасная отправка данных с проверкой соединения
+    safeSendToPeer(peerId, data, maxRetries = 3) {
+        return new Promise((resolve, reject) => {
+            let attempts = 0;
+            
+            const trySend = () => {
+                attempts++;
+                
+                if (this.sendToPeer(peerId, data)) {
+                    resolve(true);
+                } else if (attempts < maxRetries) {
+                    setTimeout(trySend, 100 * attempts); // Экспоненциальная задержка
+                } else {
+                    reject(new Error(`Не удалось отправить данные пиру ${peerId} после ${maxRetries} попыток`));
+                }
+            };
+            
+            trySend();
         });
     }
     
     // Обработка входящих сообщений
     handleIncomingMessage(data, peerId) {
         try {
-            const message = JSON.parse(data);
+            // Проверяем, является ли сообщение строкой (JSON) или объектом
+            let message;
+            if (typeof data === 'string') {
+                message = JSON.parse(data);
+            } else {
+                // Если это не строка, возможно это бинарные данные
+                console.warn('Получены бинарные данные, которые не могут быть обработаны');
+                return;
+            }
             
             if (message.type === 'text') {
                 // Проверяем команду kill
@@ -330,6 +420,18 @@ class P2PClient {
                 // Обработка команды очистки чата от другого пира
                 console.log(`Получена команда очистки чата от ${peerId}`);
                 this.clearChatData();
+            } else if (message.type === 'file_transfer_start') {
+                // Начало передачи файла
+                this.handleFileTransferStart(message, peerId);
+            } else if (message.type === 'file_transfer_chunk') {
+                // Получение чанка файла
+                this.handleFileTransferChunk(message, peerId);
+            } else if (message.type === 'file_transfer_complete') {
+                // Завершение передачи файла
+                this.handleFileTransferComplete(message, peerId);
+            } else if (message.type === 'file_transfer_error') {
+                // Ошибка передачи файла
+                this.handleFileTransferError(message, peerId);
             }
             
         } catch (error) {
@@ -340,6 +442,11 @@ class P2PClient {
     // Генерация ID для сообщения
     generateMessageId() {
         return 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    // Генерация ID для передачи файла
+    generateTransferId() {
+        return 'transfer_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     }
     
     // Отправка сообщения
@@ -370,54 +477,223 @@ class P2PClient {
         console.log(`Отправлено сообщение: ${content}`);
     }
     
-    // Отправка файла
+    // Отправка файла с чанкованием
     async sendFile(file) {
+        // Проверяем размер файла
+        if (file.size > this.maxFileSize) {
+            this.showMessageModal('Ошибка', `Файл слишком большой. Максимальный размер: ${this.formatFileSize(this.maxFileSize)}`);
+            return;
+        }
+
         try {
-            const fileData = await this.readFileAsDataURL(file);
+            const fileData = await this.readFileAsArrayBuffer(file);
+            const transferId = this.generateTransferId();
             
-            const fileMessage = {
-                type: 'file',
-                fileData: {
-                    id: 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-                    name: file.name,
-                    type: file.type,
-                    size: file.size,
-                    data: fileData,
-                    url: fileData
-                },
+            // Создаем метаданные передачи
+            const transferData = {
+                transferId: transferId,
+                file: file,
+                fileData: fileData,
+                totalChunks: Math.ceil(fileData.byteLength / this.chunkSize),
+                currentChunk: 0,
+                startTime: Date.now(),
+                peers: Array.from(this.connectedPeers)
+            };
+
+            this.fileTransfers.set(transferId, transferData);
+
+            // Отправляем информацию о начале передачи всем пирам
+            const startMessage = {
+                type: 'file_transfer_start',
+                transferId: transferId,
+                fileName: file.name,
+                fileSize: file.size,
+                fileType: file.type,
+                totalChunks: transferData.totalChunks,
                 sender: this.localPeerId,
                 timestamp: Date.now()
             };
+
+            const broadcastSuccess = this.broadcastToPeers(JSON.stringify(startMessage));
             
-            this.files.set(fileMessage.fileData.id, fileMessage.fileData);
-            
-            const messageWithId = {
-                id: this.generateMessageId(),
-                type: 'file',
-                fileId: fileMessage.fileData.id,
-                sender: this.localPeerId,
-                timestamp: Date.now()
-            };
-            
-            this.addMessageToHistory(messageWithId);
-            this.broadcastToPeers(JSON.stringify(fileMessage));
-            
-            this.updateUI();
-            console.log(`Отправлен файл: ${file.name}`);
-            
+            if (!broadcastSuccess) {
+                this.showMessageModal('Ошибка', 'Не удалось начать передачу файла. Проверьте соединение.');
+                this.fileTransfers.delete(transferId);
+                return;
+            }
+
+            console.log(`Начата передача файла: ${file.name}, чанков: ${transferData.totalChunks}`);
+
+            // Начинаем отправку чанков
+            this.sendNextChunk(transferId);
+
         } catch (error) {
             console.error('Ошибка отправки файла:', error);
-            this.showMessageModal('Ошибка', 'Ошибка отправки файла');
+            this.showMessageModal('Ошибка', 'Ошибка отправки файла: ' + error.message);
         }
     }
+
+    // Отправка следующего чанка файла
+    async sendNextChunk(transferId) {
+        const transfer = this.fileTransfers.get(transferId);
+        if (!transfer) return;
+
+        if (transfer.currentChunk >= transfer.totalChunks) {
+            // Все чанки отправлены
+            this.completeFileTransfer(transferId);
+            return;
+        }
+
+        const start = transfer.currentChunk * this.chunkSize;
+        const end = Math.min(start + this.chunkSize, transfer.fileData.byteLength);
+        const chunk = transfer.fileData.slice(start, end);
+
+        try {
+            // Конвертируем ArrayBuffer в base64 для передачи
+            const base64Chunk = await this.arrayBufferToBase64(chunk);
+            
+            const chunkMessage = {
+                type: 'file_transfer_chunk',
+                transferId: transferId,
+                chunkIndex: transfer.currentChunk,
+                totalChunks: transfer.totalChunks,
+                data: base64Chunk,
+                sender: this.localPeerId,
+                timestamp: Date.now()
+            };
+
+            const messageString = JSON.stringify(chunkMessage);
+            
+            // Отправляем всем пирам
+            const success = this.broadcastToPeers(messageString);
+            
+            if (success) {
+                transfer.currentChunk++;
+                console.log(`Отправлен чанк ${transfer.currentChunk}/${transfer.totalChunks} для передачи ${transferId}`);
+                
+                // Отправляем следующий чанк с небольшой задержкой для стабильности
+                setTimeout(() => {
+                    this.sendNextChunk(transferId);
+                }, 10);
+            } else {
+                console.warn(`Не удалось отправить чанк ${transfer.currentChunk} для передачи ${transferId}, повтор через 1 секунду`);
+                setTimeout(() => {
+                    this.sendNextChunk(transferId);
+                }, 1000);
+            }
+
+        } catch (error) {
+            console.error(`Ошибка отправки чанка ${transfer.currentChunk}:`, error);
+            this.handleFileTransferError(transferId, error.message);
+        }
+    }
+
+    // Завершение передачи файла
+    async completeFileTransfer(transferId) {
+        const transfer = this.fileTransfers.get(transferId);
+        if (!transfer) return;
+
+        const completeMessage = {
+            type: 'file_transfer_complete',
+            transferId: transferId,
+            sender: this.localPeerId,
+            timestamp: Date.now()
+        };
+
+        this.broadcastToPeers(JSON.stringify(completeMessage));
+
+        // Сохраняем файл локально
+        const fileData = {
+            id: transferId,
+            name: transfer.file.name,
+            type: transfer.file.type,
+            size: transfer.file.size,
+            data: await this.arrayBufferToDataURL(transfer.fileData, transfer.file.type),
+            url: await this.arrayBufferToDataURL(transfer.fileData, transfer.file.type)
+        };
+
+        this.files.set(transferId, fileData);
+
+        // Добавляем сообщение в историю
+        this.addMessageToHistory({
+            id: this.generateMessageId(),
+            type: 'file',
+            fileId: transferId,
+            sender: this.localPeerId,
+            timestamp: Date.now()
+        });
+
+        this.fileTransfers.delete(transferId);
+        
+        const duration = Date.now() - transfer.startTime;
+        console.log(`Передача файла завершена: ${transfer.file.name}, время: ${duration}ms`);
+        
+        this.updateUI();
+    }
+
+    // Обработка ошибки передачи файла
+    handleFileTransferError(transferId, error) {
+        const transfer = this.fileTransfers.get(transferId);
+        if (!transfer) return;
+
+        const errorMessage = {
+            type: 'file_transfer_error',
+            transferId: transferId,
+            error: error,
+            sender: this.localPeerId,
+            timestamp: Date.now()
+        };
+
+        this.broadcastToPeers(JSON.stringify(errorMessage));
+
+        this.fileTransfers.delete(transferId);
+        console.error(`Ошибка передачи файла ${transferId}:`, error);
+        this.showMessageModal('Ошибка', `Ошибка передачи файла: ${error}`);
+    }
+
+    // Мониторинг передачи файлов
+    monitorFileTransfers() {
+        const now = Date.now();
+        this.fileTransfers.forEach((transfer, transferId) => {
+            // Если передача длится больше 5 минут, отменяем её
+            if (now - transfer.startTime > 5 * 60 * 1000) {
+                console.warn(`Передача ${transferId} превысила время ожидания, отменяем`);
+                this.handleFileTransferError(transferId, 'Timeout');
+            }
+        });
+    }
     
-    // Чтение файла как Data URL
-    readFileAsDataURL(file) {
+    // Чтение файла как ArrayBuffer
+    readFileAsArrayBuffer(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);
             reader.onerror = reject;
-            reader.readAsDataURL(file);
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    // Конвертация ArrayBuffer в base64
+    arrayBufferToBase64(buffer) {
+        return new Promise((resolve) => {
+            const blob = new Blob([buffer]);
+            const reader = new FileReader();
+            reader.onload = () => {
+                const dataUrl = reader.result;
+                const base64 = dataUrl.split(',')[1];
+                resolve(base64);
+            };
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    // Конвертация ArrayBuffer в DataURL
+    arrayBufferToDataURL(buffer, mimeType) {
+        return new Promise((resolve) => {
+            const blob = new Blob([buffer], { type: mimeType });
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
         });
     }
 

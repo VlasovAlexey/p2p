@@ -37,6 +37,21 @@ P2PClient.prototype.setupConnectionHandlers = function(connection, peerId) {
             }
         }
     };
+
+    // Обработчик ICE соединения
+    connection.oniceconnectionstatechange = () => {
+        console.log(`ICE состояние соединения с ${peerId}: ${connection.iceConnectionState}`);
+        
+        if (connection.iceConnectionState === 'failed') {
+            console.log(`ICE соединение с ${peerId} завершилось ошибкой, пытаемся восстановить...`);
+            // Пытаемся пересоздать предложение
+            if (!this.reconnectInProgress) {
+                setTimeout(() => {
+                    this.reconnectToPeer(peerId);
+                }, this.reconnectTimeout);
+            }
+        }
+    };
 };
 
 // Создание предложения для подключения
@@ -48,12 +63,16 @@ P2PClient.prototype.createOffer = async function() {
         // Создаем временный ID для нового пира
         const newPeerId = 'peer_' + Math.random().toString(36).substr(2, 9);
         
-        // Создаем соединение
+        // Создаем соединение с улучшенными настройками
         const connection = new RTCPeerConnection(this.rtcConfig);
         this.connections.set(newPeerId, connection);
         
-        // Создаем канал данных
-        const dataChannel = connection.createDataChannel('messenger', { ordered: true });
+        // Создаем канал данных с улучшенными настройками
+        const dataChannel = connection.createDataChannel('messenger', {
+            ordered: true,
+            maxRetransmits: 30, // Увеличиваем количество попыток ретрансмиссии
+            protocol: 'messenger-protocol'
+        });
         this.setupDataChannel(dataChannel, newPeerId);
         
         // Обработчик входящего канала данных
@@ -101,6 +120,20 @@ P2PClient.prototype.createOffer = async function() {
                 }
             }
         };
+
+        // Обработчик ICE соединения
+        connection.oniceconnectionstatechange = () => {
+            console.log(`ICE состояние соединения: ${connection.iceConnectionState}`);
+            
+            if (connection.iceConnectionState === 'failed') {
+                console.log('ICE соединение завершилось ошибкой, пытаемся восстановить...');
+                if (!this.reconnectInProgress) {
+                    setTimeout(() => {
+                        this.reconnectToPeer(newPeerId);
+                    }, this.reconnectTimeout);
+                }
+            }
+        };
         
         // Создаем предложение
         const offer = await connection.createOffer();
@@ -136,7 +169,7 @@ P2PClient.prototype.handleOffer = async function(signalData) {
             return;
         }
         
-        // Создаем соединение
+        // Создаем соединение с улучшенными настройками
         const connection = new RTCPeerConnection(this.rtcConfig);
         this.connections.set(peerId, connection);
         
@@ -189,6 +222,20 @@ P2PClient.prototype.handleOffer = async function(signalData) {
                 this.updateUI();
                 
                 // Пытаемся переподключиться
+                if (!this.reconnectInProgress) {
+                    setTimeout(() => {
+                        this.reconnectToPeer(peerId);
+                    }, this.reconnectTimeout);
+                }
+            }
+        };
+
+        // Обработчик ICE соединения
+        connection.oniceconnectionstatechange = () => {
+            console.log(`ICE состояние соединения с ${peerId}: ${connection.iceConnectionState}`);
+            
+            if (connection.iceConnectionState === 'failed') {
+                console.log(`ICE соединение с ${peerId} завершилось ошибкой, пытаемся восстановить...`);
                 if (!this.reconnectInProgress) {
                     setTimeout(() => {
                         this.reconnectToPeer(peerId);
